@@ -172,7 +172,10 @@ async def get_activity_details(activity_code: str):
         "name": activity['name'],
         "location_name": activity['location_name'],
         "start_time": activity['start_time'],
-        "end_time": activity['end_time']
+        "end_time": activity['end_time'],
+        "latitude": activity['latitude'],      # <-- 确保添加了这一行
+        "longitude": activity['longitude'],    # <-- 确保添加了这一行
+        "radius_meters": activity['radius_meters'] # <-- 确保添加了这一行
     }
 
 @router_participant.get("/activity/{activity_code}/qr") # <-- 确认此路由在 participant 之下

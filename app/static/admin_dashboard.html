@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>管理员控制台</title>
+    <title>管理员控制台 (最终修复)</title>
     
     <script>
         const token = localStorage.getItem('admin_access_token');
@@ -23,6 +23,7 @@
     </script>
 
     <style>
+        /* 样式表 (保持不变) */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: #f0f2f5;
@@ -137,8 +138,8 @@
             padding: 0;
         }
         #activity-list li {
-            display: flex;
-            justify-content: space-between;
+            display: grid; /* 使用 Grid 布局 */
+            grid-template-columns: 1fr auto; /* 信息占满，按钮自动宽度 */
             align-items: center;
             padding: 1rem;
             border-bottom: 1px solid #eee;
@@ -154,17 +155,53 @@
             color: #555;
             display: block;
         }
+        .activity-actions {
+            display: flex;
+            gap: 0.5rem; /* 按钮间距 */
+        }
         .activity-actions button {
-            background: #28a745;
-            color: white;
             border: none;
             padding: 0.4rem 0.8rem;
             border-radius: 4px;
             cursor: pointer;
+            color: white;
+            font-size: 0.85rem;
         }
-        .activity-actions button:hover {
-            background: #218838;
+        .btn-qr { background: #17a2b8; }
+        .btn-qr:hover { background: #138496; }
+        .btn-logs { background: #28a745; }
+        .btn-logs:hover { background: #218838; }
+        .btn-time { background: #ffc107; color: #333; }
+        .btn-time:hover { background: #e0a800; }
+        .btn-delete { background: #dc3545; }
+        .btn-delete:hover { background: #c82333; }
+
+        /* 结果区域的表格 */
+        #result-table {
+            width: 100%;
+            margin-top: 1rem;
+            border-collapse: collapse;
+            text-align: left;
         }
+        #result-table th, #result-table td {
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+        }
+        #result-table th {
+            background-color: #f8f9fa;
+        }
+        /* 结果区域的时间修改表单 */
+        #update-time-form {
+            display: grid;
+            gap: 1rem;
+            text-align: left;
+            padding: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 1rem;
+            background: #fdfdfd;
+        }
+
     </style>
 </head>
 <body>
@@ -201,14 +238,15 @@
                 </div>
 
                 <div class="form-group-full">
-                    <label for="location_name">地点名称 (自动获取):</label>
-                    <input type="text" id="location_name" readonly>
+                    <label for="location_name">地点名称 (自动获取, 可手动修改):</label>
+                    <input type="text" id="location_name">
                 </div>
                 
                 <input type="hidden" id="latitude">
                 <input type="hidden" id="longitude">
                 
                 <button type="submit" id="submit-button">创建活动</button>
+                
                 <div id="result" class="form-group-full"></div>
             </form>
         </section>
@@ -230,6 +268,7 @@
         var marker;
         var geocoder;
         const ADMIN_TOKEN = localStorage.getItem('admin_access_token');
+        const resultDiv = document.getElementById('result');
 
         // --- 1. 退出登录 ---
         document.getElementById('logout-button').addEventListener('click', () => {
@@ -245,16 +284,19 @@
                 marker = new AMap.Marker();
                 geocoder = new AMap.Geocoder();
 
+                // --- (新) 最终修复 ---
                 var geolocation = new AMap.Geolocation({
                     enableHighAccuracy: true,
                     timeout: 10000,
                     zoomToAccuracy: true,
+                    convert: true // <-- 必须是 true, 才能将 WGS-84 转为 GCJ-02
                 });
 
                 // 尝试获取当前位置
                 geolocation.getCurrentPosition(function(status, result) {
                     var centerPoint = [116.397428, 39.90923]; // 默认北京
-                    if (status == 'complete') {
+                    if (status == 'complete' && result.info === 'SUCCESS') {
+                        // 使用高德返回的 lng, lat (这已经是 GCJ-02 了)
                         centerPoint = [result.position.lng, result.position.lat];
                     } else {
                         console.error('Geolocation failed:', result.message);
@@ -279,6 +321,7 @@
 
         // --- 4. 地图点击事件 ---
         function handleMapClick(e) {
+            // e.lnglat 已经是 GCJ-02 坐标
             var lat = e.lnglat.getLat();
             var lng = e.lnglat.getLng();
             
@@ -292,12 +335,17 @@
                 if (status === 'complete' && result.info === 'OK') {
                     document.getElementById('location_name').value = result.regeocode.formattedAddress;
                 } else {
-                    document.getElementById('location_name').value = "未知地点";
+                    if (!document.getElementById('location_name').value) {
+                         document.getElementById('location_name').value = "未知地点";
+                    }
+                    console.warn('逆地址编码失败:', result);
                 }
             });
         }
 
-        // --- 5. (新) 加载活动列表 ---
+        // --- (后续所有 JS 保持不变) ---
+        
+        // --- 5. 加载活动列表 ---
         async function loadActivities() {
             const listContainer = document.getElementById('activity-list').querySelector('ul');
             listContainer.innerHTML = '<li>正在加载...</li>'; // 提示
@@ -326,6 +374,8 @@
                     
                     const startTime = new Date(activity.start_time).toLocaleString('zh-CN');
                     const endTime = new Date(activity.end_time).toLocaleString('zh-CN');
+                    const isoStart = new Date(activity.start_time).toISOString().slice(0, 16);
+                    const isoEnd = new Date(activity.end_time).toISOString().slice(0, 16);
 
                     li.innerHTML = `
                         <div class="activity-info">
@@ -333,8 +383,11 @@
                             <span>${startTime} - ${endTime}</span>
                         </div>
                         <div class="activity-actions">
-                            <button onclick="showQr('${activity.unique_code}')">查看二维码</button>
-                            </div>
+                            <button class="btn-logs" onclick="showDetails('${activity.unique_code}', '${activity.name}')">查看详情</button>
+                            <button class="btn-time" onclick="showUpdateModal('${activity.unique_code}', '${isoStart}', '${isoEnd}')">更改时间</button>
+                            <button class="btn-qr" onclick="showQr('${activity.unique_code}')">二维码</button>
+                            <button class="btn-delete" onclick="deleteActivity('${activity.unique_code}', '${activity.name}')">删除</button>
+                        </div>
                     `;
                     listContainer.appendChild(li);
                 });
@@ -345,25 +398,160 @@
             }
         }
         
-        // (新) 查看二维码的辅助函数
+        // --- 6. 查看二维码 ---
         function showQr(code) {
-            // 这个函数只是个示例，您可以将其显示在弹窗中
-            // 这里我们用它来更新“创建活动”区域的二维码
-            const resultDiv = document.getElementById('result');
             const qrUrl = `/students_system/api/participant/activity/${code}/qr`;
             resultDiv.innerHTML = `<h3>活动二维码 (代码: ${code})</h3>
                                  <img src="${qrUrl}" alt="签到二维码" width="200">`;
-            
-            // 滚动到结果区域
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // --- 7. 查看签到详情 ---
+        async function showDetails(code, name) {
+            resultDiv.innerHTML = `<h3>正在加载 "${name}" 的签到详情...</h3>`;
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+
+            try {
+                const response = await fetch(`/students_system/api/admin/activities/${code}/logs`, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
+                });
+                
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '加载失败');
+                }
+
+                const data = await response.json();
+                const logs = data.logs;
+                
+                let tableHtml = `
+                    <h3>"${data.activity_name}" 签到详情 (共 ${logs.length} 人)</h3>
+                    <table id="result-table">
+                        <thead>
+                            <tr>
+                                <th>学号</th>
+                                <th>姓名</th>
+                                <th>签到时间</th>
+                                <th>签退时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                if (logs.length > 0) {
+                    logs.forEach(log => {
+                        const checkIn = log.check_in_time ? new Date(log.check_in_time).toLocaleString('zh-CN') : '未签到';
+                        const checkOut = log.check_out_time ? new Date(log.check_out_time).toLocaleString('zh-CN') : '未签退';
+                        tableHtml += `
+                            <tr>
+                                <td>${log.student_id}</td>
+                                <td>${log.name}</td>
+                                <td>${checkIn}</td>
+                                <td>${checkOut}</td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    tableHtml += '<tr><td colspan="4" style="text-align:center;">暂无签到记录</td></tr>';
+                }
+                
+                tableHtml += '</tbody></table>';
+                resultDiv.innerHTML = tableHtml;
+
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error-msg">加载详情失败: ${error.message}</p>`;
+            }
+        }
+
+        // --- 8. 显示更改时间表单 ---
+        function showUpdateModal(code, startTime, endTime) {
+            resultDiv.innerHTML = `
+                <h3>更改活动时间 (Code: ${code})</h3>
+                <div id="update-time-form">
+                    <div class="form-group">
+                        <label for="update_start_time">新开始时间:</label>
+                        <input type="datetime-local" id="update_start_time" value="${startTime}">
+                    </div>
+                    <div class="form-group">
+                        <label for="update_end_time">新结束时间:</label>
+                        <input type="datetime-local" id="update_end_time" value="${endTime}">
+                    </div>
+                    <button id="submit-update-button" class="btn-qr" onclick="handleUpdateTime('${code}')">确认修改</button>
+                </div>
+            `;
             resultDiv.scrollIntoView({ behavior: 'smooth' });
         }
 
+        // --- 9. 处理更改时间提交 ---
+        async function handleUpdateTime(code) {
+            const newStart = document.getElementById('update_start_time').value;
+            const newEnd = document.getElementById('update_end_time').value;
 
-        // --- 6. 表单提交逻辑 ---
+            if (!newStart || !newEnd) {
+                alert('时间不能为空');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/students_system/api/admin/activities/${code}`, {
+                    method: 'PUT',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${ADMIN_TOKEN}`
+                    },
+                    body: JSON.stringify({
+                        start_time: newStart,
+                        end_time: newEnd
+                    })
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '更新失败');
+                }
+                
+                resultDiv.innerHTML = `<p class="success-msg">活动时间更新成功!</p>`;
+                loadActivities(); // 刷新列表
+
+            } catch (error) {
+                 resultDiv.innerHTML += `<p class="error-msg" style="text-align:center;">${error.message}</p>`;
+            }
+        }
+
+        // --- 10. 删除活动 ---
+        async function deleteActivity(code, name) {
+            if (!confirm(`确定要删除活动 "${name}" 吗？\n所有相关的签到记录将一同被删除，此操作不可逆！`)) {
+                return;
+            }
+
+            resultDiv.innerHTML = `正在删除 "${name}"...`;
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+
+             try {
+                const response = await fetch(`/students_system/api/admin/activities/${code}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '删除失败');
+                }
+                
+                resultDiv.innerHTML = `<p class="success-msg">活动 "${name}" 已成功删除!</p>`;
+                loadActivities(); // 刷新列表
+
+            } catch (error) {
+                 resultDiv.innerHTML = `<p class="error-msg">删除失败: ${error.message}</p>`;
+            }
+        }
+
+
+        // --- 11. 表单提交逻辑 ---
         document.getElementById('activityForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const resultDiv = document.getElementById('result');
             resultDiv.innerHTML = '正在创建...';
 
             const data = {
@@ -380,13 +568,17 @@
                 resultDiv.innerHTML = '<p class="error-msg">请在地图上选择一个地点</p>';
                 return;
             }
+            if (!data.location_name || data.location_name === "未知地点") {
+                resultDiv.innerHTML = '<p class="error-msg">请输入有效的地点名称</p>';
+                return;
+            }
 
             try {
                 const response = await fetch('/students_system/api/admin/activities', {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${ADMIN_TOKEN}` // 携带 Token
+                        'Authorization': `Bearer ${ADMIN_TOKEN}`
                     },
                     body: JSON.stringify(data)
                 });
@@ -398,8 +590,6 @@
 
                 if (response.ok) {
                     const result = await response.json();
-                    
-                    // 使用新的 API 端点获取二维码
                     const qrUrl = `/students_system/api/participant/activity/${result.unique_code}/qr`;
                     
                     resultDiv.innerHTML = `
@@ -407,11 +597,8 @@
                         <p>活动代码: ${result.unique_code}</p>
                         <img src="${qrUrl}" alt="签到二维码" width="200">`;
                     
-                    // 重置表单
                     document.getElementById('activityForm').reset();
-                    marker.setMap(null); // 移除地图上的标记
-
-                    // 刷新活动列表
+                    marker.setMap(null); 
                     loadActivities();
 
                 } else {

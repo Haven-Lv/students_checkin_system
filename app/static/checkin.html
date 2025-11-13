@@ -4,44 +4,191 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>活动签到</title>
+    
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '3b5f49eb59da5745a5f054734d1d5889', // 替换为您的安全密钥
+        }
+    </script>
+    <script type="text/javascript" 
+            src="https://webapi.amap.com/maps?v=2.0&key=3b5f49eb59da5745a5f054734d1d5889"> // 替换为您的 Key
+    </script>
+
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        div { margin-bottom: 10px; }
-        input { width: 90%; padding: 10px; margin-top: 5px; }
-        button { width: 100%; padding: 12px; font-size: 16px; }
-        #loading, #message { text-align: center; padding: 20px; }
+        /* 样式表 (保持不变) */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #container {
+            width: 100%;
+            max-width: 500px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #eee;
+        }
+        header h2 {
+            margin: 0;
+            color: #007bff;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+        main {
+            padding: 1rem 2rem 2rem 2rem;
+        }
+        .info-group {
+            margin-bottom: 1rem;
+            font-size: 1rem;
+            color: #555;
+        }
+        .info-group strong {
+            color: #333;
+            min-width: 50px;
+            display: inline-block;
+        }
+        #map {
+            width: 100%;
+            height: 250px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-top: 1rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1rem;
+            box-sizing: border-box; /* 关键 */
+        }
+        button {
+            width: 100%;
+            padding: 0.85rem;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #checkInButton {
+            background-color: #007bff;
+            color: white;
+        }
+        #checkInButton:hover {
+            background-color: #0056b3;
+        }
+        #checkInButton:disabled {
+            background-color: #a0a0a0;
+        }
+        #checkOutButton {
+            background-color: #dc3545;
+            color: white;
+        }
+        #checkOutButton:hover {
+            background-color: #c82333;
+        }
+        #checkOutButton:disabled {
+            background-color: #a0a0a0;
+        }
+        #message {
+            text-align: center;
+            padding: 1rem 0 0 0;
+            font-weight: bold;
+            font-size: 0.9rem; /* 缩小一点字体 */
+            word-wrap: break-word; /* 允许换行 */
+        }
         .success { color: green; }
         .error { color: red; }
+        
+        /* 加载动画 */
+        #loading {
+            padding: 3rem;
+            text-align: center;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
     </style>
 </head>
 <body>
-    <div id="loading">正在加载...</div>
-    
-    <div id="activityInfo" style="display:none;">
-        <h2 id="activityName"></h2>
-        <p id="activityLocation"></p>
-        <p id="activityTime"></p>
-    </div>
 
-    <div id="checkInForm" style="display:none;">
-        <h3>签到</h3>
-        <div>
-            <label for="student_id">学号:</label>
-            <input type="text" id="student_id" required>
+    <div id="container">
+        
+        <div id="loading">
+            <div class="loader"></div>
+            <p>正在加载活动信息...</p>
         </div>
-        <div>
-            <label for="name">姓名:</label>
-            <input type="text" id="name" required>
+        
+        <div id="content" style="display:none;">
+            <header>
+                <h2 id="activityName"></h2>
+            </header>
+            
+            <main>
+                <div id="activityInfo">
+                    <div class="info-group">
+                        <strong title="地点">地点:</strong> <span id="activityLocation"></span>
+                    </div>
+                    <div class="info-group">
+                        <strong title="时间">时间:</strong> <span id="activityTime"></span>
+                    </div>
+                    <div id="map"></div>
+                </div>
+
+                <div id="checkInForm" style="display:none;">
+                    <h3>签到</h3>
+                    <div class="form-group">
+                        <label for="student_id">学号:</label>
+                        <input type="text" id="student_id" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="name">姓名:</label>
+                        <input type="text" id="name" required>
+                    </div>
+                    <button id="checkInButton">签 到</button>
+                </div>
+
+                <div id="checkOutForm" style="display:none;">
+                    <h3>您已签到</h3>
+                    <p>如需签退，请点击下方按钮。</p>
+                    <button id="checkOutButton">签 退</button>
+                </div>
+
+                <div id="message"></div>
+            </main>
         </div>
-        <button id="checkInButton">签 到</button>
     </div>
-
-    <div id="checkOutForm" style="display:none;">
-        <h3>您已签到</h3>
-        <button id="checkOutButton">签 退</button>
-    </div>
-
-    <div id="message"></div>
 
     <script>
         // --- 核心JS逻辑 ---
@@ -49,35 +196,62 @@
         const activityCode = urlParams.get('code');
         const tokenStorageKey = `device_session_token_${activityCode}`;
 
+        // DOM 元素
         const loadingDiv = document.getElementById('loading');
+        const contentDiv = document.getElementById('content');
         const activityInfoDiv = document.getElementById('activityInfo');
         const checkInForm = document.getElementById('checkInForm');
         const checkOutForm = document.getElementById('checkOutForm');
         const messageDiv = document.getElementById('message');
-        
         const checkInButton = document.getElementById('checkInButton');
         const checkOutButton = document.getElementById('checkOutButton');
+
+        // 地图变量
+        var map;
+        var activityCircle;
+        var activityMarker;
+        var studentMarker;
+        
+        // 高德定位插件实例
+        var amapGeolocation; 
 
         // 在页面加载时运行
         document.addEventListener('DOMContentLoaded', async () => {
             if (!activityCode) {
                 showMessage('无效的活动链接', true);
+                loadingDiv.style.display = 'none';
                 return;
             }
 
             // 1. 获取活动信息
+            let activity;
             try {
                 const response = await fetch(`/students_system/api/participant/activity/${activityCode}`);
-                if (!response.ok) throw new Error(await response.text());
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '活动加载失败');
+                }
                 
-                const activity = await response.json();
+                activity = await response.json();
+                
+                // 填充信息
                 document.getElementById('activityName').innerText = activity.name;
-                document.getElementById('activityLocation').innerText = `地点: ${activity.location_name}`;
-                document.getElementById('activityTime').innerText = `时间: ${new Date(activity.start_time).toLocaleString()} - ${new Date(activity.end_time).toLocaleString()}`;
-                activityInfoDiv.style.display = 'block';
+                document.getElementById('activityLocation').innerText = activity.location_name;
+                document.getElementById('activityTime').innerText = `${new Date(activity.start_time).toLocaleString()} - ${new Date(activity.end_time).toLocaleString()}`;
+                
+                // 4. 初始化地图 (在调用前检查坐标)
+                if (activity.longitude != null && activity.latitude != null) {
+                    initMap(activity);
+                    
+                } else {
+                    // 如果活动没有坐标，则打印警告并隐藏地图
+                    console.warn('活动缺少坐标信息，地图未加载。');
+                    document.getElementById('map').style.display = 'none';
+                }
 
             } catch (error) {
                 showMessage(`加载活动失败: ${error.message}`, true);
+                loadingDiv.style.display = 'none';
                 return;
             }
             
@@ -92,8 +266,111 @@
                 checkInForm.style.display = 'block';
             }
             
+            // 隐藏加载，显示内容
             loadingDiv.style.display = 'none';
+            contentDiv.style.display = 'block';
         });
+
+        // 5. 初始化地图函数
+        function initMap(activity) {
+            const center = [activity.longitude, activity.latitude];
+
+            map = new AMap.Map('map', {
+                zoom: 16,
+                center: center
+            });
+
+            // 加载插件 (增加了 AMap.Geolocation)
+            AMap.plugin(['AMap.Circle', 'AMap.Marker', 'AMap.Geolocation'], function() {
+                // 绘制签到中心点 (这是 GCJ-02)
+                activityMarker = new AMap.Marker({
+                    position: center,
+                    title: activity.location_name
+                });
+                map.add(activityMarker);
+
+                // 绘制签到范围（蓝色圆圈） (这是 GCJ-02)
+                activityCircle = new AMap.Circle({
+                    center: center,
+                    radius: activity.radius_meters, // 半径
+                    borderWeight: 2,
+                    strokeColor: "#007bff",
+                    strokeOpacity: 1,
+                    fillColor: "#007bff",
+                    fillOpacity: 0.2, // 透明度
+                    zIndex: 50,
+                });
+                map.add(activityCircle);
+                
+                // 缩放地图以适应圆圈
+                map.setFitView([activityCircle]);
+
+                // 初始化学生位置标记 (但不显示)
+                studentMarker = new AMap.Marker({
+                    icon: "https://webapi.amap.com/theme/v1.3/markers/n/loc.png", // 蓝色定位图标
+                    offset: new AMap.Pixel(-13, -30)
+                });
+                map.add(studentMarker);
+
+                // --- (新) 最终修复 ---
+                // 初始化高德定位插件
+                amapGeolocation = new AMap.Geolocation({
+                    enableHighAccuracy: true, 
+                    timeout: 10000,           
+                    maximumAge: 0,            
+                    
+                    // --- 关键修改 ---
+                    convert: true,           // <-- 必须是 true
+                    
+                    extensions: 'all',        
+                    showButton: false,        
+                    showMarker: false,        
+                    showCircle: false,        
+                });
+                
+                // 插件加载完毕后，立即获取学生位置
+                getCurrentStudentPosition();
+            });
+        }
+        
+        // 6. 更新学生位置标记
+        function updateStudentPosition(lat, lon) {
+            if (studentMarker) {
+                const position = new AMap.LngLat(lon, lat); // (这是 GCJ-02)
+                studentMarker.setPosition(position);
+                studentMarker.show(); // 显示标记
+            }
+        }
+        
+        // 7. 使用高德定位插件获取位置
+        function getCurrentStudentPosition() {
+            showMessage('正在获取您的位置...', false); 
+
+            if (!amapGeolocation) {
+                showMessage('定位插件尚未加载，请稍候...', true);
+                return;
+            }
+
+            amapGeolocation.getCurrentPosition(function(status, result) {
+                if (status === 'complete' && result.info === 'SUCCESS') {
+                    // result.position 包含了经纬度 (这已经是 GCJ-02)
+                    const lat = result.position.lat;
+                    const lon = result.position.lng; 
+                    
+                    updateStudentPosition(lat, lon); // 更新地图上的蓝点
+                    
+                    const accuracy = result.accuracy;
+                    showMessage(`您的位置已显示 (精度: ${accuracy || '未知'} 米)`, false); 
+                    
+                    if (map && studentMarker) {
+                        map.setCenter(studentMarker.getPosition());
+                    }
+                } else {
+                    let msg = '获取您的位置失败: ' + (result.message || '未知错误');
+                    showMessage(msg, true);
+                }
+            });
+        }
 
         // --- 签到逻辑 ---
         checkInButton.addEventListener('click', () => {
@@ -118,18 +395,28 @@
             performAction('checkout', { device_session_token: deviceToken });
         });
 
-        // --- 统一的动作执行器 (签到/签退) ---
+        // 8. 统一的动作执行器 (改用高德定位)
         function performAction(type, payload) {
             showMessage('正在获取您的位置信息...', false);
             checkInButton.disabled = true;
             checkOutButton.disabled = true;
 
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
+            if (!amapGeolocation) {
+                showMessage('定位插件未加载，请刷新页面', true);
+                checkInButton.disabled = false;
+                checkOutButton.disabled = false;
+                return;
+            }
+
+            // 使用高德定位
+            amapGeolocation.getCurrentPosition(async function(status, result) {
+                if (status === 'complete' && result.info === 'SUCCESS') {
+                    const lat = result.position.lat; // (这是 GCJ-02)
+                    const lon = result.position.lng; // (这是 GCJ-02)
                     
-                    showMessage('位置获取成功，正在提交...', false);
+                    updateStudentPosition(lat, lon);
+                    
+                    showMessage(`位置获取成功 (精度: ${result.accuracy || '未知'} 米)，正在提交...`, false);
 
                     const fullPayload = {
                         ...payload,
@@ -145,24 +432,23 @@
                             body: JSON.stringify(fullPayload)
                         });
 
-                        const result = await response.json();
+                        const resultData = await response.json();
                         
                         if (!response.ok) {
-                            throw new Error(result.detail || '操作失败');
+                            throw new Error(resultData.detail || '操作失败');
                         }
 
                         // --- 核心状态转换 ---
                         if (type === 'checkin') {
-                            // 签到成功，存储 Token
-                            localStorage.setItem(tokenStorageKey, result.device_session_token);
+                            localStorage.setItem(tokenStorageKey, resultData.device_session_token);
                             showMessage('签到成功!', false);
                             checkInForm.style.display = 'none';
                             checkOutForm.style.display = 'block';
                         } else {
-                            // 签退成功，删除 Token
                             localStorage.removeItem(tokenStorageKey);
                             showMessage('签退成功!', false);
                             checkOutForm.style.display = 'none';
+                            if(studentMarker) studentMarker.hide();
                         }
 
                     } catch (error) {
@@ -171,27 +457,13 @@
                         checkInButton.disabled = false;
                         checkOutButton.disabled = false;
                     }
-                },
-                (error) => {
-                    // 地理位置获取失败
-                    let msg = '获取地理位置失败。';
-                    switch (error.code) {
-                        case error.PERMISSION_DENIED:
-                            msg += ' 请允许浏览器访问您的位置。';
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            msg += ' 位置信息不可用。';
-                            break;
-                        case error.TIMEOUT:
-                            msg += ' 获取位置超时。';
-                            break;
-                    }
+                } else {
+                    let msg = '获取地理位置失败: ' + (result.message || '未知错误');
                     showMessage(msg, true);
                     checkInButton.disabled = false;
                     checkOutButton.disabled = false;
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 } // 强制获取最新位置
-            );
+                }
+            });
         }
 
         function showMessage(msg, isError) {
