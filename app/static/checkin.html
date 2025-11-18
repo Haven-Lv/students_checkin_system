@@ -7,7 +7,7 @@
     
     <script type="text/javascript">
         window._AMapSecurityConfig = {
-            securityJsCode: '3b5f49eb59da5745a5f054734d1d5889', // 替换为您的安全密钥
+            securityJsCode: '4f18fd75c2a1809095eac43374b4edb2', // 替换为您的安全密钥
         }
     </script>
     <script type="text/javascript" 
@@ -426,34 +426,49 @@
                     };
                     
                     try {
-                        const response = await fetch(`/students_system/api/participant/${type}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(fullPayload)
-                        });
+                    const response = await fetch(`/students_system/api/participant/${type}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(fullPayload)
+                    });
 
-                        const resultData = await response.json();
-                        
-                        if (!response.ok) {
-                            throw new Error(resultData.detail || '操作失败');
-                        }
+                    // --- 修改开始 ---
+                    
+                    // 1. 无论状态码如何，先解析 JSON
+                    let resultData;
+                    try {
+                        resultData = await response.json();
+                    } catch (e) {
+                        resultData = {}; 
+                    }
 
-                        // --- 核心状态转换 ---
-                        if (type === 'checkin') {
-                            localStorage.setItem(tokenStorageKey, resultData.device_session_token);
-                            showMessage('签到成功!', false);
-                            checkInForm.style.display = 'none';
-                            checkOutForm.style.display = 'block';
-                        } else {
-                            localStorage.removeItem(tokenStorageKey);
-                            showMessage('签退成功!', false);
-                            checkOutForm.style.display = 'none';
-                            if(studentMarker) studentMarker.hide();
-                        }
+                    // 2. 如果是 HTTP 错误 (如 500)，抛出异常
+                    if (!response.ok) {
+                         throw new Error(resultData.detail || `服务器错误: ${response.status}`);
+                    }
 
-                    } catch (error) {
-                        showMessage(`操作失败: ${error.message}`, true);
-                    } finally {
+                    // 3. [关键] 如果是 200 OK，但包含 detail 字段，说明是业务拒绝（如距离过远）
+                    if (resultData.detail) {
+                        throw new Error(resultData.detail);
+                    }
+
+                    // 4. 真正的成功逻辑
+                    if (type === 'checkin') {
+                        localStorage.setItem(tokenStorageKey, resultData.device_session_token);
+                        showMessage('签到成功!', false);
+                        checkInForm.style.display = 'none';
+                        checkOutForm.style.display = 'block';
+                    } else {
+                        localStorage.removeItem(tokenStorageKey);
+                        showMessage('签退成功!', false);
+                        checkOutForm.style.display = 'none';
+                        if(studentMarker) studentMarker.hide();
+                    }
+                    // --- 修改结束 ---
+
+                } catch (error) {
+                    showMessage(`${error.message}`, true); // 去掉了前面的 "操作失败: " 前缀，让提示更清爽
+                } finally {
                         checkInButton.disabled = false;
                         checkOutButton.disabled = false;
                     }

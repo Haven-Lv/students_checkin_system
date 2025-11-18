@@ -1,6 +1,6 @@
 import getpass
-from security import get_password_hash
-from db_utils import get_db_connection, db_create_admin
+from .security import get_password_hash
+from .db_utils import get_db_connection, db_create_admin
 
 def main():
     print("--- 创建超级管理员 ---")

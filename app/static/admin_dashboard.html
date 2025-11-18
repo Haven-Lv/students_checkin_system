@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>管理员控制台 (最终修复)</title>
+    <title>管理员控制台</title>
     
     <script>
         const token = localStorage.getItem('admin_access_token');
@@ -15,7 +15,7 @@
 
     <script type="text/javascript">
         window._AMapSecurityConfig = {
-            securityJsCode: '3b5f49eb59da5745a5f054734d1d5889', // 替换为您的安全密钥
+            securityJsCode: '4f18fd75c2a1809095eac43374b4edb2', // 替换为您的安全密钥
         }
     </script>
     <script type="text/javascript" 
@@ -398,11 +398,27 @@
             }
         }
         
-        // --- 6. 查看二维码 ---
+        // --- 6. 查看二维码 (修改版) ---
         function showQr(code) {
-            const qrUrl = `/students_system/api/participant/activity/${code}/qr`;
-            resultDiv.innerHTML = `<h3>活动二维码 (代码: ${code})</h3>
-                                 <img src="${qrUrl}" alt="签到二维码" width="200">`;
+            // 二维码图片的 API 地址
+            const qrImgUrl = `/students_system/api/participant/activity/${code}/qr`;
+            
+            // 手动拼接签到页面的完整 URL (用于显示文本)
+            // 注意：这里使用了你的域名 havenchannel.xyz
+            const checkinPageUrl = `https://havenchannel.xyz/students_system/checkin.html?code=${code}`;
+
+            resultDiv.innerHTML = `
+                <h3>活动二维码 (代码: ${code})</h3>
+                <div style="margin-bottom: 15px;">
+                    <img src="${qrImgUrl}" alt="签到二维码" width="200">
+                </div>
+                <div style="word-break: break-all; background: #f8f9fa; padding: 10px; border-radius: 4px;">
+                    <strong>签到链接:</strong><br>
+                    <a href="${checkinPageUrl}" target="_blank" style="color: #007bff; text-decoration: none;">
+                        ${checkinPageUrl}
+                    </a>
+                </div>
+            `;
             resultDiv.scrollIntoView({ behavior: 'smooth' });
         }
         

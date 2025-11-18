@@ -1,8 +1,8 @@
 import mysql.connector
 from mysql.connector.cursor import MySQLCursorDict
 from contextlib import contextmanager
-from config import settings
-from models import ActivityCreate, ParticipantLogin
+from .config import settings
+from .models import ActivityCreate, ParticipantLogin
 from datetime import datetime
 import uuid
 import haversine as hs

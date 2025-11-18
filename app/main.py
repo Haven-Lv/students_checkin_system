@@ -2,16 +2,15 @@ from fastapi import FastAPI, Depends, HTTPException, status, APIRouter, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
 from datetime import timedelta
-import models
 import io
 import qrcode # 确保已安装 qrcode[pil]
 from datetime import datetime
-
+from . import coord_utils
+from . import db_utils
+from .db_utils import get_db_connection
 # 导入我们创建的模块
-import models
-import security
-import db_utils
-from db_utils import get_db_connection
+from . import models
+from . import security
 
 app = FastAPI(
     title="学生活动签到系统",
@@ -173,14 +172,14 @@ async def get_activity_details(activity_code: str):
         "location_name": activity['location_name'],
         "start_time": activity['start_time'],
         "end_time": activity['end_time'],
-        "latitude": activity['latitude'],      # <-- 确保添加了这一行
-        "longitude": activity['longitude'],    # <-- 确保添加了这一行
-        "radius_meters": activity['radius_meters'] # <-- 确保添加了这一行
+        "latitude": activity['latitude'],      
+        "longitude": activity['longitude'],    
+        "radius_meters": activity['radius_meters'] 
     }
 
-@router_participant.get("/activity/{activity_code}/qr") # <-- 确认此路由在 participant 之下
+@router_participant.get("/activity/{activity_code}/qr") 
 async def get_activity_qr_code(
-    activity_code: str # <-- 确认移除了 admin_user 依赖
+    activity_code: str 
 ):
     """
     为活动生成签到二维码 (公开)
@@ -204,85 +203,150 @@ async def participant_checkin(request: models.CheckInRequest):
     """
     参与者签到
     """
-    # ... (此函数及 /checkout 函数保持不变) ...
-    now = datetime.now()
-    with get_db_connection() as db:
-        activity = db_utils.get_activity_by_code(db, request.activity_code)
-        
-        # 1. 校验活动是否存在
-        if not activity:
-            raise HTTPException(status_code=404, detail="活动不存在")
+    try:
+        now = datetime.now()
+        with get_db_connection() as db:
+            activity = db_utils.get_activity_by_code(db, request.activity_code)
+            # 1. 校验活动是否存在
+            if not activity:
+                return JSONResponse(status_code=200, content={"detail": "活动不存在"})
 
-        # 2. 校验时间
-        if not (activity['start_time'] <= now <= activity['end_time']):
-            raise HTTPException(status_code=400, detail="不在活动时间范围内")
+            # 2. 校验时间
+            if not (activity['start_time'] <= now <= activity['end_time']):
+                return JSONResponse(status_code=200, content={"detail": "不在活动时间范围内"})
 
-        # 3. 校验地点
-        distance = db_utils.calculate_distance(
-            activity['latitude'], activity['longitude'],
-            request.latitude, request.longitude
-        )
-        if distance > activity['radius_meters']:
-            raise HTTPException(status_code=400, detail=f"您不在签到范围内 (距离 {int(distance)} 米)")
+            # 3. 校验地点 (*** 修复 Decimal 报错 ***) ---   
 
-        # 4. 获取或创建参与者
-        participant = db_utils.get_participant(db, request.student_id)
-        if not participant:
-            participant = db_utils.create_participant(db, request.student_id, request.name)
+            # 3a. 将活动坐标 (GCJ-02) 转回 WGS-84
+            try:
+                # 强制转换为 float，防止数据库返回 Decimal 类型导致 math 库报错
+                act_lon_float = float(activity['longitude'])
+                act_lat_float = float(activity['latitude'])
+                
+                act_wgs_lon, act_wgs_lat = coord_utils.gcj2wgs(act_lon_float, act_lat_float)
+            except Exception as e:
+                # 打印错误日志以便调试
+                print(f"坐标转换错误: {e}") 
+                raise HTTPException(status_code=500, detail=f"坐标转换失败 (活动): {str(e)}")
+
+            # 3b. 将学生坐标 (GCJ-02) 转回 WGS-84
+            try:
+                # 前端传来的已经是 float，但为了保险也可以转一下
+                req_lon_float = float(request.longitude)
+                req_lat_float = float(request.latitude)
+                
+                req_wgs_lon, req_wgs_lat = coord_utils.gcj2wgs(req_lon_float, req_lat_float)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"坐标转换失败 (学生): {str(e)}")
+            # 3c. 使用 WGS-84 坐标进行 haversine 计算
+            try:
+                distance = db_utils.calculate_distance(
+                    act_wgs_lat, act_wgs_lon,
+                    req_wgs_lat, req_wgs_lon
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"距离计算失败: {str(e)}")
+                
+            # [修改核心] 距离过远，返回 200 + 错误详情
+            if distance > activity['radius_meters']:
+                return JSONResponse(status_code=200, content={"detail": f"您不在签到范围内 (距离 {int(distance)} 米)"})
+            # --- 修复结束 ---
+
+            # 4. 获取或创建参与者
+            participant = db_utils.get_participant(db, request.student_id)
             if not participant:
-                 raise HTTPException(status_code=400, detail="学号已存在但姓名不匹配 (或创建用户失败)")
-        elif participant['name'] != request.name:
-            raise HTTPException(status_code=400, detail="学号与姓名不匹配")
+                participant = db_utils.create_participant(db, request.student_id, request.name)
+                if not participant:
+                     raise HTTPException(status_code=400, detail="学号已存在但姓名不匹配 (或创建用户失败)")
+            elif participant['name'] != request.name:
+                raise HTTPException(status_code=400, detail="学号与姓名不匹配")
 
-        # 5. 检查是否已签到
-        if db_utils.get_check_log(db, participant['id'], activity['id']):
-            raise HTTPException(status_code=400, detail="您已签到，请勿重复操作")
+            # 5. 检查是否已签到
+            if db_utils.get_check_log(db, participant['id'], activity['id']):
+                raise HTTPException(status_code=400, detail="您已签到，请勿重复操作")
 
-        # 6. 创建签到记录
-        try:
-            device_token = db_utils.create_check_log(
-                db, activity['id'], participant['id'], request.latitude, request.longitude
-            )
-            return {"message": "签到成功", "device_session_token": device_token}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"签到失败: {e}")
+            # 6. 创建签到记录
+            try:
+                device_token = db_utils.create_check_log(
+                    db, activity['id'], participant['id'], request.latitude, request.longitude
+                )
+                return {"message": "签到成功", "device_session_token": device_token}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"签到失败: {e}")
+    except HTTPException:
+        # 重新抛出已知的HTTP异常
+        raise
+    except Exception as e:
+        # 捕获所有其他异常并返回500错误
+        raise HTTPException(status_code=500, detail=f"签到过程中发生未知错误: {str(e)}")
 
 @router_participant.post("/checkout")
 async def participant_checkout(request: models.CheckOutRequest):
     """
     参与者签退
     """
-    # ... (此函数保持不变) ...
-    now = datetime.now()
-    with get_db_connection() as db:
-        # 1. 验证 device_token 并获取签到记录
-        log = db_utils.get_log_by_device_token(db, request.device_session_token)
-        
-        if not log:
-            raise HTTPException(status_code=404, detail="无效的签到凭证，请使用签到设备重试")
+    try:
+        now = datetime.now()
+        with get_db_connection() as db:
+            # 1. 验证 device_token 并获取签到记录
+            log = db_utils.get_log_by_device_token(db, request.device_session_token)
+            
+            if not log:
+                raise HTTPException(status_code=404, detail="无效的签到凭证，请使用签到设备重试")
 
-        # 2. 检查是否已签退
-        if log['check_out_time']:
-            raise HTTPException(status_code=400, detail="您已签退，请勿重复操作")
+            # 2. 检查是否已签退
+            if log['check_out_time']:
+                raise HTTPException(status_code=400, detail="您已签退，请勿重复操作")
 
-        # 3. 校验时间 (使用联表查询出的活动时间)
-        if not (log['start_time'] <= now <= log['end_time']):
-            raise HTTPException(status_code=400, detail="不在活动时间范围内")
+            # 3. 校验时间 (使用联表查询出的活动时间)
+            if not (log['start_time'] <= now <= log['end_time']):
+                raise HTTPException(status_code=400, detail="不在活动时间范围内")
 
-        # 4. 校验地点
-        distance = db_utils.calculate_distance(
-            log['latitude'], log['longitude'],
-            request.latitude, request.longitude
-        )
-        if distance > log['radius_meters']:
-            raise HTTPException(status_code=400, detail=f"您不在签退范围内 (距离 {int(distance)} 米)")
+            # 4. 校验地点 (*** 修复 Decimal 报错 ***) ---
 
-        # 5. 更新签退记录
-        try:
-            db_utils.update_check_log_checkout(db, log['id'], request.latitude, request.longitude)
-            return {"message": "签退成功"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"签退失败: {e}")
+            # 4a. 将活动坐标 (GCJ-02) 转回 WGS-84
+            try:
+                # 强制转换为 float
+                act_lon_float = float(log['longitude'])
+                act_lat_float = float(log['latitude'])
+                
+                act_wgs_lon, act_wgs_lat = coord_utils.gcj2wgs(act_lon_float, act_lat_float)
+            except Exception as e:
+                print(f"坐标转换错误: {e}")
+                raise HTTPException(status_code=500, detail=f"坐标转换失败 (活动): {str(e)}")
+
+            # 4b. 将学生坐标 (GCJ-02) 转回 WGS-84
+            try:
+                req_lon_float = float(request.longitude)
+                req_lat_float = float(request.latitude)
+                
+                req_wgs_lon, req_wgs_lat = coord_utils.gcj2wgs(req_lon_float, req_lat_float)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"坐标转换失败 (学生): {str(e)}")
+            # 4c. 使用 WGS-84 坐标进行 haversine 计算
+            try:
+                distance = db_utils.calculate_distance(
+                    act_wgs_lat, act_wgs_lon,
+                    req_wgs_lat, req_wgs_lon
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"距离计算失败: {str(e)}")
+                
+            if distance > log['radius_meters']:
+                return JSONResponse(status_code=200, content={"detail": f"您不在签退范围内 (距离 {int(distance)} 米)"})
+
+            # 5. 更新签退记录
+            try:
+                db_utils.update_check_log_checkout(db, log['id'], request.latitude, request.longitude)
+                return {"message": "签退成功"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"签退失败: {e}")
+    except HTTPException:
+        # 重新抛出已知的HTTP异常
+        raise
+    except Exception as e:
+        # 捕获所有其他异常并返回500错误
+        raise HTTPException(status_code=500, detail=f"签退过程中发生未知错误: {str(e)}")
 
 # ==================================================
 # 3. 注册路由和静态文件
@@ -293,4 +357,6 @@ app.include_router(router_participant)
 # 挂载静态文件 (前端页面)
 # Nginx 会将 /students_system/ 转发到 /
 # 所以 FastAPI 应该从 / 提供静态文件
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+import os
+# 使用相对于app目录的静态文件路径
+app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

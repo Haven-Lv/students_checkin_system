@@ -5,7 +5,7 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-from config import settings
+from .config import settings
 
 # 1. 密码哈希
 # 使用 pbkdf2_sha256 作为默认哈希方案（纯 Python 实现），避免依赖本地 bcrypt 库导致的兼容性问题。
