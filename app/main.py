@@ -1,16 +1,23 @@
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import timedelta
+from datetime import timedelta, datetime
 import io
 import qrcode # 确保已安装 qrcode[pil]
-from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formataddr
+import random
+import os
+
+# 导入本地模块
 from . import coord_utils
 from . import db_utils
 from .db_utils import get_db_connection
-# 导入我们创建的模块
 from . import models
 from . import security
+from .config import settings
+from .security import get_current_student
 
 app = FastAPI(
     title="学生活动签到系统",
@@ -22,7 +29,7 @@ router_admin = APIRouter(prefix="/api/admin", tags=["Admin"])
 router_participant = APIRouter(prefix="/api/participant", tags=["Participant"])
 
 # ==================================================
-# 1. 管理员路由
+# 1. 管理员路由 (保持不变)
 # ==================================================
 
 @router_admin.post("/login", response_model=models.Token)
@@ -70,9 +77,8 @@ async def get_activities_list(admin_user: str = Depends(security.get_current_adm
         activities = db_utils.get_all_activities(db)
         return activities
 
-# 剪切这个函数 (原来在 router_admin 下)
 @router_admin.get("/activities/{activity_code}/qr")
-async def get_activity_qr_code(
+async def get_activity_qr_code_admin(
     activity_code: str,
     admin_user: str = Depends(security.get_current_admin)
 ):
@@ -84,7 +90,6 @@ async def get_activity_qr_code(
         if not activity:
             raise HTTPException(status_code=404, detail="Activity not found")
 
-    # 注意：URL 必须是 Nginx 暴露给外界的 URL
     checkin_url = f"https://havenchannel.xyz/students_system/checkin.html?code={activity_code}"
 
     img = qrcode.make(checkin_url)
@@ -132,7 +137,7 @@ async def delete_activity(
 @router_admin.put("/activities/{activity_code}")
 async def update_activity_time(
     activity_code: str,
-    time_update: models.ActivityTimeUpdate, # 使用我们新加的 model
+    time_update: models.ActivityTimeUpdate,
     admin_user: str = Depends(security.get_current_admin)
 ):
     """
@@ -147,14 +152,13 @@ async def update_activity_time(
             db_utils.db_update_activity_time(
                 db, activity['id'], time_update.start_time, time_update.end_time
             )
-            # 返回更新后的活动信息
             updated_activity = db_utils.get_activity_by_code(db, activity_code)
             return updated_activity
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"更新失败: {e}")
 
 # ==================================================
-# 2. 参与者路由
+# 2. 参与者路由 (新增鉴权与邮箱功能)
 # ==================================================
 
 @router_participant.get("/activity/{activity_code}")
@@ -178,9 +182,7 @@ async def get_activity_details(activity_code: str):
     }
 
 @router_participant.get("/activity/{activity_code}/qr") 
-async def get_activity_qr_code(
-    activity_code: str 
-):
+async def get_activity_qr_code(activity_code: str):
     """
     为活动生成签到二维码 (公开)
     """
@@ -198,155 +200,204 @@ async def get_activity_qr_code(
     
     return StreamingResponse(buf, media_type="image/png")
 
-@router_participant.post("/checkin", response_model=models.CheckInResponse)
-async def participant_checkin(request: models.CheckInRequest):
-    """
-    参与者签到
-    """
+# --- 新增：邮箱验证码接口 ---
+@router_participant.post("/send-code")
+async def send_email_code(req: models.EmailRequest):
+    """发送 6 位数字验证码到邮箱"""
+    code = str(random.randint(100000, 999999))
+    
+    # 1. 保存到数据库
+    with get_db_connection() as db:
+        db_utils.save_verification_code(db, req.email, code)
+    
+    # 2. 发送邮件
     try:
-        now = datetime.now()
+        msg = MIMEText(f"【校园签到】您的验证码是：{code}，5分钟内有效。请勿泄露。", 'plain', 'utf-8')
+        msg['From'] = formataddr(["签到系统", settings.SMTP_USER])
+        msg['To'] = req.email
+        msg['Subject'] = "登录验证码"
+
+        server = smtplib.SMTP_SSL(settings.SMTP_SERVER, settings.SMTP_PORT)
+        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.sendmail(settings.SMTP_USER, [req.email], msg.as_string())
+        server.quit()
+    except Exception as e:
+        print(f"邮件发送失败: {e}")
+        raise HTTPException(status_code=500, detail="邮件发送失败，请检查邮箱地址或联系管理员")
+
+    return {"message": "验证码已发送"}
+
+# 新增：获取当前签到状态接口
+@router_participant.get("/status")
+async def get_current_status(current_user: dict = Depends(get_current_student)):
+    student_id = current_user['sub']
+    
+    with get_db_connection() as db:
+        participant = db_utils.get_participant(db, student_id)
+        if not participant:
+            # 如果用户不存在，说明没签到
+            return {"is_checked_in": False}
+            
+        # 查数据库看有没有未签退的记录
+        active_log = db_utils.get_active_log_by_student(db, participant['id'])
+        
+        if active_log:
+            return {
+                "is_checked_in": True,
+                "activity_name": active_log['activity_name'],
+                "activity_code": active_log['unique_code'],
+                "check_in_time": active_log['check_in_time']
+            }
+        else:
+            return {"is_checked_in": False}
+
+# --- 新增：登录/注册接口 ---
+@router_participant.post("/login", response_model=models.Token)
+async def login_with_email(req: models.StudentLogin):
+    """邮箱登录/注册一体化接口"""
+    with get_db_connection() as db:
+        # 1. 校验验证码
+        valid_code = db_utils.get_valid_code(db, req.email)
+        
+        if not valid_code or valid_code != req.code:
+            raise HTTPException(status_code=400, detail="验证码错误或已过期")
+            
+        # 2. 查询用户是否存在
+        student = db_utils.get_participant_by_email(db, req.email)
+        
+        # 3. 如果不存在，则是注册，必须提供学号和姓名
+        if not student:
+            if not req.student_id or not req.name:
+                # 返回特定状态码，告诉前端需要弹出注册框
+                raise HTTPException(status_code=400, detail="NEED_REGISTER_INFO")
+            
+            # 检查学号是否被占用
+            if db_utils.get_participant(db, req.student_id):
+                 raise HTTPException(status_code=400, detail="该学号已被绑定")
+            
+            try:
+                db_utils.register_student_with_email(db, req.student_id, req.name, req.email)
+                student = db_utils.get_participant_by_email(db, req.email)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail="注册失败")
+
+        # 4. 生成 Token (Payload 中放入学号 student_id)
+        access_token = security.create_access_token(
+            data={"sub": student['student_id'], "role": "student"} 
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+
+# --- 修改：鉴权签到 (替代了原来的 /checkin) ---
+@router_participant.post("/checkin-auth", response_model=models.CheckInResponse)
+async def checkin_authorized(
+    request: models.CheckInRequestAuthorized, 
+    current_user: dict = Depends(get_current_student) # 强制要求登录
+):
+    """已登录用户的签到接口"""
+    student_id = current_user['sub'] # 从 Token 获取学号
+    
+    try:
         with get_db_connection() as db:
+            participant = db_utils.get_participant(db, student_id)
+            if not participant:
+                raise HTTPException(status_code=401, detail="用户不存在")
+
+            now = datetime.now()
             activity = db_utils.get_activity_by_code(db, request.activity_code)
-            # 1. 校验活动是否存在
+            
             if not activity:
                 return JSONResponse(status_code=200, content={"detail": "活动不存在"})
-
-            # 2. 校验时间
             if not (activity['start_time'] <= now <= activity['end_time']):
                 return JSONResponse(status_code=200, content={"detail": "不在活动时间范围内"})
 
-            # 3. 校验地点 (*** 修复 Decimal 报错 ***) ---   
-
-            # 3a. 将活动坐标 (GCJ-02) 转回 WGS-84
+            # --- 坐标转换与距离计算 (复用原逻辑) ---
             try:
-                # 强制转换为 float，防止数据库返回 Decimal 类型导致 math 库报错
+                # 1. 活动坐标 GCJ -> WGS
                 act_lon_float = float(activity['longitude'])
                 act_lat_float = float(activity['latitude'])
-                
                 act_wgs_lon, act_wgs_lat = coord_utils.gcj2wgs(act_lon_float, act_lat_float)
-            except Exception as e:
-                # 打印错误日志以便调试
-                print(f"坐标转换错误: {e}") 
-                raise HTTPException(status_code=500, detail=f"坐标转换失败 (活动): {str(e)}")
-
-            # 3b. 将学生坐标 (GCJ-02) 转回 WGS-84
-            try:
-                # 前端传来的已经是 float，但为了保险也可以转一下
+                
+                # 2. 学生坐标 GCJ -> WGS
                 req_lon_float = float(request.longitude)
                 req_lat_float = float(request.latitude)
-                
                 req_wgs_lon, req_wgs_lat = coord_utils.gcj2wgs(req_lon_float, req_lat_float)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"坐标转换失败 (学生): {str(e)}")
-            # 3c. 使用 WGS-84 坐标进行 haversine 计算
-            try:
+                
+                # 3. 计算距离
                 distance = db_utils.calculate_distance(
                     act_wgs_lat, act_wgs_lon,
                     req_wgs_lat, req_wgs_lon
                 )
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"距离计算失败: {str(e)}")
+                print(f"Check-in calc error: {e}")
+                raise HTTPException(status_code=500, detail=f"定位计算失败: {str(e)}")
                 
-            # [修改核心] 距离过远，返回 200 + 错误详情
             if distance > activity['radius_meters']:
                 return JSONResponse(status_code=200, content={"detail": f"您不在签到范围内 (距离 {int(distance)} 米)"})
-            # --- 修复结束 ---
 
-            # 4. 获取或创建参与者
-            participant = db_utils.get_participant(db, request.student_id)
-            if not participant:
-                participant = db_utils.create_participant(db, request.student_id, request.name)
-                if not participant:
-                     raise HTTPException(status_code=400, detail="学号已存在但姓名不匹配 (或创建用户失败)")
-            elif participant['name'] != request.name:
-                raise HTTPException(status_code=400, detail="学号与姓名不匹配")
-
-            # 5. 检查是否已签到
+            # --- 检查重复签到 ---
             if db_utils.get_check_log(db, participant['id'], activity['id']):
                 raise HTTPException(status_code=400, detail="您已签到，请勿重复操作")
 
-            # 6. 创建签到记录
-            try:
-                device_token = db_utils.create_check_log(
-                    db, activity['id'], participant['id'], request.latitude, request.longitude
-                )
-                return {"message": "签到成功", "device_session_token": device_token}
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"签到失败: {e}")
-    except HTTPException:
-        # 重新抛出已知的HTTP异常
-        raise
-    except Exception as e:
-        # 捕获所有其他异常并返回500错误
-        raise HTTPException(status_code=500, detail=f"签到过程中发生未知错误: {str(e)}")
-
-@router_participant.post("/checkout")
-async def participant_checkout(request: models.CheckOutRequest):
-    """
-    参与者签退
-    """
-    try:
-        now = datetime.now()
-        with get_db_connection() as db:
-            # 1. 验证 device_token 并获取签到记录
-            log = db_utils.get_log_by_device_token(db, request.device_session_token)
+            # --- 写入记录 ---
+            device_token = db_utils.create_check_log(
+                db, activity['id'], participant['id'], request.latitude, request.longitude
+            )
+            return {"message": "签到成功", "device_session_token": device_token}
             
-            if not log:
-                raise HTTPException(status_code=404, detail="无效的签到凭证，请使用签到设备重试")
-
-            # 2. 检查是否已签退
-            if log['check_out_time']:
-                raise HTTPException(status_code=400, detail="您已签退，请勿重复操作")
-
-            # 3. 校验时间 (使用联表查询出的活动时间)
-            if not (log['start_time'] <= now <= log['end_time']):
-                raise HTTPException(status_code=400, detail="不在活动时间范围内")
-
-            # 4. 校验地点 (*** 修复 Decimal 报错 ***) ---
-
-            # 4a. 将活动坐标 (GCJ-02) 转回 WGS-84
-            try:
-                # 强制转换为 float
-                act_lon_float = float(log['longitude'])
-                act_lat_float = float(log['latitude'])
-                
-                act_wgs_lon, act_wgs_lat = coord_utils.gcj2wgs(act_lon_float, act_lat_float)
-            except Exception as e:
-                print(f"坐标转换错误: {e}")
-                raise HTTPException(status_code=500, detail=f"坐标转换失败 (活动): {str(e)}")
-
-            # 4b. 将学生坐标 (GCJ-02) 转回 WGS-84
-            try:
-                req_lon_float = float(request.longitude)
-                req_lat_float = float(request.latitude)
-                
-                req_wgs_lon, req_wgs_lat = coord_utils.gcj2wgs(req_lon_float, req_lat_float)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"坐标转换失败 (学生): {str(e)}")
-            # 4c. 使用 WGS-84 坐标进行 haversine 计算
-            try:
-                distance = db_utils.calculate_distance(
-                    act_wgs_lat, act_wgs_lon,
-                    req_wgs_lat, req_wgs_lon
-                )
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"距离计算失败: {str(e)}")
-                
-            if distance > log['radius_meters']:
-                return JSONResponse(status_code=200, content={"detail": f"您不在签退范围内 (距离 {int(distance)} 米)"})
-
-            # 5. 更新签退记录
-            try:
-                db_utils.update_check_log_checkout(db, log['id'], request.latitude, request.longitude)
-                return {"message": "签退成功"}
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"签退失败: {e}")
     except HTTPException:
-        # 重新抛出已知的HTTP异常
         raise
     except Exception as e:
-        # 捕获所有其他异常并返回500错误
-        raise HTTPException(status_code=500, detail=f"签退过程中发生未知错误: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"签到未知错误: {str(e)}")
+
+# 新增：实名认证签退接口 (CheckOutRequestAuthorized)
+# 先在 models.py 里确认一下有没有 CheckOutRequestAuthorized，如果没有，用下面的 dict 接收也行，或者复用 CheckInRequestAuthorized
+# 建议复用 CheckInRequestAuthorized，因为参数一样（活动代码、经纬度）
+
+@router_participant.post("/checkout-auth")
+async def checkout_authorized(
+    request: models.CheckInRequestAuthorized, # 复用这个模型，因为它包含了 lat/lon 和 activity_code
+    current_user: dict = Depends(get_current_student)
+):
+    """实名签退 (支持跨设备)"""
+    student_id = current_user['sub']
+    
+    with get_db_connection() as db:
+        # 1. 找人
+        participant = db_utils.get_participant(db, student_id)
+        if not participant:
+            raise HTTPException(status_code=401, detail="用户不存在")
+            
+        # 2. 找记录 (查该用户当前活动的未签退记录)
+        active_log = db_utils.get_active_log_by_student(db, participant['id'])
+        
+        if not active_log:
+             raise HTTPException(status_code=400, detail="未找到有效的签到记录，或已签退")
+             
+        # 3. 校验活动是否匹配 (防止A活动签到，跑去扫B活动的码签退)
+        if active_log['unique_code'] != request.activity_code:
+             raise HTTPException(status_code=400, detail="您当前的签到记录与此活动不符")
+
+        # 4. 校验时间
+        now = datetime.now()
+        if not (active_log['start_time'] <= now <= active_log['end_time']):
+             raise HTTPException(status_code=400, detail="不在活动时间范围内")
+
+        # 5. 校验地点 (复用之前的逻辑)
+        try:
+            act_wgs_lat, act_wgs_lon = coord_utils.gcj2wgs(float(active_log['longitude']), float(active_log['latitude']))
+            req_wgs_lat, req_wgs_lon = coord_utils.gcj2wgs(float(request.longitude), float(request.latitude))
+            distance = db_utils.calculate_distance(act_wgs_lat, act_wgs_lon, req_wgs_lat, req_wgs_lon)
+        except Exception:
+            distance = 0
+            
+        if distance > active_log['radius_meters']:
+             # 同样返回 200 给前端处理逻辑错误
+             return JSONResponse(status_code=200, content={"detail": f"您不在签退范围内 (距离 {int(distance)} 米)"})
+
+        # 6. 执行签退
+        db_utils.update_check_log_checkout(db, active_log['id'], request.latitude, request.longitude)
+        
+        return {"message": "签退成功"}
 
 # ==================================================
 # 3. 注册路由和静态文件
@@ -354,9 +405,5 @@ async def participant_checkout(request: models.CheckOutRequest):
 app.include_router(router_admin)
 app.include_router(router_participant)
 
-# 挂载静态文件 (前端页面)
-# Nginx 会将 /students_system/ 转发到 /
-# 所以 FastAPI 应该从 / 提供静态文件
-import os
-# 使用相对于app目录的静态文件路径
+# 挂载静态文件
 app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")

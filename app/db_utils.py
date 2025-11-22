@@ -3,10 +3,49 @@ from mysql.connector.cursor import MySQLCursorDict
 from contextlib import contextmanager
 from .config import settings
 from .models import ActivityCreate, ParticipantLogin
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import haversine as hs
 from haversine import Unit
+
+# --- 新增：验证码操作 ---
+def save_verification_code(db, email, code):
+    cursor = db.cursor()
+    # 有效期 5 分钟
+    expires = datetime.now() + timedelta(minutes=5)
+    # 使用 REPLACE INTO 覆盖旧验证码
+    cursor.execute("REPLACE INTO verification_codes (email, code, expires_at) VALUES (%s, %s, %s)", 
+                   (email, code, expires))
+    db.commit()
+    cursor.close()
+
+def get_valid_code(db, email):
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("SELECT code, expires_at FROM verification_codes WHERE email = %s", (email,))
+    record = cursor.fetchone()
+    cursor.close()
+    if record and record['expires_at'] > datetime.now():
+        return record['code']
+    return None
+
+# --- 新增：学生操作 ---
+def get_participant_by_email(db, email):
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM participants WHERE email = %s", (email,))
+    return cursor.fetchone()
+
+def register_student_with_email(db, student_id, name, email):
+    cursor = db.cursor()
+    try:
+        cursor.execute("INSERT INTO participants (student_id, name, email) VALUES (%s, %s, %s)", 
+                       (student_id, name, email))
+        db.commit()
+        return cursor.lastrowid
+    except mysql.connector.Error as err:
+        db.rollback()
+        raise err # 可能是学号或邮箱重复
+    finally:
+        cursor.close()
 
 # 数据库连接配置
 DB_CONFIG = {
@@ -209,3 +248,19 @@ def db_update_activity_time(db, activity_id: int, start_time: datetime, end_time
         db.rollback()
         cursor.close()
         raise err
+
+def get_active_log_by_student(db, participant_id: int):
+    """查找该用户当前未完成的签到记录（已签到但未签退）"""
+    cursor = db.cursor(dictionary=True)
+    # 联表查询活动信息，方便前端显示
+    query = """
+        SELECT cl.*, a.name as activity_name, a.latitude, a.longitude, a.radius_meters, a.start_time, a.end_time, a.unique_code
+        FROM check_logs cl
+        JOIN activities a ON cl.activity_id = a.id
+        WHERE cl.participant_id = %s AND cl.check_out_time IS NULL
+        LIMIT 1
+    """
+    cursor.execute(query, (participant_id,))
+    log = cursor.fetchone()
+    cursor.close()
+    return log

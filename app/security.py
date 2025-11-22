@@ -52,6 +52,28 @@ async def get_current_admin(token: str = Depends(oauth2_scheme)) -> str:
     except JWTError:
         raise credentials_exception
     
+# 定义学生用的 OAuth2 Scheme (复用同一个 endpoint 也没关系，主要是为了从 Header 取 Token)
+oauth2_student_scheme = OAuth2PasswordBearer(tokenUrl="/api/participant/login")
+
+async def get_current_student(token: str = Depends(oauth2_student_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="登录已过期，请重新登录",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        student_id: str = payload.get("sub")
+        role: str = payload.get("role")
+        
+        if student_id is None or role != "student":
+            raise credentials_exception
+        
+        # 返回用户信息字典
+        return {"sub": student_id, "role": role}
+    except JWTError:
+        raise credentials_exception
+
     # 在这个方案中，我们只返回用户名
     # 也可以在这里查询数据库以获取完整的 Admin 对象
     return username

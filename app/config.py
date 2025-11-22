@@ -13,9 +13,12 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = 'HS256'
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 天
 
-    # 替换原有的 class Config: 为 model_config（Pydantic V2 推荐写法）
-    model_config = ConfigDict(
-        case_sensitive=True  # 保留你原来的大小写敏感配置
-    )
-
+    # --- 新增：邮件 SMTP 配置 ---
+    # 以 QQ 邮箱为例
+    SMTP_SERVER: str = 'smtp.qq.com'
+    SMTP_PORT: int = 465 # SSL 端口
+    SMTP_USER: str = '2412748011@qq.com'      # 发送方邮箱
+    SMTP_PASSWORD: str = 'vkxcjnuxlacxdjha'   # 注意：是授权码，不是密码！
+    
+    model_config = ConfigDict(case_sensitive=True)
 settings = Settings()

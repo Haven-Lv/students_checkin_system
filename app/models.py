@@ -29,6 +29,24 @@ class ActivityResponse(ActivityCreate):
     unique_code: str
     created_at: datetime
 
+# --- 新增：学生认证相关 ---
+class EmailRequest(BaseModel):
+    email: str
+
+class StudentLogin(BaseModel):
+    email: str
+    code: str
+    # 如果是新用户注册，需要填下面两项；老用户登录只需填上面两项
+    student_id: Optional[str] = None
+    name: Optional[str] = None
+
+# --- 修改：签到请求 (移除 student_id 和 name，因为通过 Token 自动获取) ---
+class CheckInRequestAuthorized(BaseModel):
+    activity_code: str
+    latitude: float
+    longitude: float
+
+
 # --- 参与者模型 ---
 class ParticipantLogin(BaseModel):
     student_id: str

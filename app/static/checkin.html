@@ -65,22 +65,8 @@
             border-radius: 4px;
             margin-top: 1rem;
         }
-        .form-group {
-            margin-bottom: 1rem;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 1rem;
-            box-sizing: border-box; /* 关键 */
-        }
+        /* 移除了 .form-group 输入框样式，因为不再需要输入学号姓名 */
+        
         button {
             width: 100%;
             padding: 0.85rem;
@@ -89,6 +75,7 @@
             border-radius: 4px;
             cursor: pointer;
             transition: background-color 0.2s;
+            margin-top: 1rem; /* 稍微增加顶部间距 */
         }
         #checkInButton {
             background-color: #007bff;
@@ -114,13 +101,12 @@
             text-align: center;
             padding: 1rem 0 0 0;
             font-weight: bold;
-            font-size: 0.9rem; /* 缩小一点字体 */
-            word-wrap: break-word; /* 允许换行 */
+            font-size: 0.9rem;
+            word-wrap: break-word;
         }
         .success { color: green; }
         .error { color: red; }
         
-        /* 加载动画 */
         #loading {
             padding: 3rem;
             text-align: center;
@@ -138,7 +124,6 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
     </style>
 </head>
 <body>
@@ -167,16 +152,8 @@
                 </div>
 
                 <div id="checkInForm" style="display:none;">
-                    <h3>签到</h3>
-                    <div class="form-group">
-                        <label for="student_id">学号:</label>
-                        <input type="text" id="student_id" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="name">姓名:</label>
-                        <input type="text" id="name" required>
-                    </div>
-                    <button id="checkInButton">签 到</button>
+                    <h3 style="text-align: center;">点击按钮进行签到</h3>
+                    <button id="checkInButton">立即签 到</button>
                 </div>
 
                 <div id="checkOutForm" style="display:none;">
@@ -192,14 +169,15 @@
 
     <script>
         // --- 核心JS逻辑 ---
+        // 修改点：全局变量中获取 Token
+        const studentToken = localStorage.getItem('student_token');
         const urlParams = new URLSearchParams(window.location.search);
         const activityCode = urlParams.get('code');
-        const tokenStorageKey = `device_session_token_${activityCode}`;
+        const tokenStorageKey = `device_session_token_${activityCode}`; // 用于存储签退用的临时Token
 
         // DOM 元素
         const loadingDiv = document.getElementById('loading');
         const contentDiv = document.getElementById('content');
-        const activityInfoDiv = document.getElementById('activityInfo');
         const checkInForm = document.getElementById('checkInForm');
         const checkOutForm = document.getElementById('checkOutForm');
         const messageDiv = document.getElementById('message');
@@ -211,191 +189,157 @@
         var activityCircle;
         var activityMarker;
         var studentMarker;
-        
-        // 高德定位插件实例
         var amapGeolocation; 
 
         // 在页面加载时运行
         document.addEventListener('DOMContentLoaded', async () => {
+            // 1. 基础检查
+            if (!studentToken) {
+                window.location.href = `student_login.html?redirect_code=${activityCode || ''}`;
+                return;
+            }
+
             if (!activityCode) {
                 showMessage('无效的活动链接', true);
                 loadingDiv.style.display = 'none';
                 return;
             }
 
-            // 1. 获取活动信息
-            let activity;
             try {
-                const response = await fetch(`/students_system/api/participant/activity/${activityCode}`);
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.detail || '活动加载失败');
-                }
+                // 2. 并行请求：获取活动信息 + 获取用户签到状态 (Cloud Sync!)
+                const [actResp, statusResp] = await Promise.all([
+                    fetch(`/students_system/api/participant/activity/${activityCode}`),
+                    fetch(`/students_system/api/participant/status`, {
+                        headers: { 'Authorization': `Bearer ${studentToken}` }
+                    })
+                ]);
+
+                // 处理活动信息
+                if (!actResp.ok) throw new Error('活动加载失败');
+                const activity = await actResp.json();
                 
-                activity = await response.json();
-                
-                // 填充信息
+                // 填充页面
                 document.getElementById('activityName').innerText = activity.name;
                 document.getElementById('activityLocation').innerText = activity.location_name;
                 document.getElementById('activityTime').innerText = `${new Date(activity.start_time).toLocaleString()} - ${new Date(activity.end_time).toLocaleString()}`;
                 
-                // 4. 初始化地图 (在调用前检查坐标)
-                if (activity.longitude != null && activity.latitude != null) {
-                    initMap(activity);
-                    
+                if (activity.longitude != null) initMap(activity);
+
+                // 3. 处理签到状态 (核心修改)
+                const statusData = await statusResp.json();
+                
+                // 如果服务器说“已签到”，不管本地有没有 Token，都显示签退界面
+                if (statusData.is_checked_in) {
+                    // 只有当服务器返回的活动正是当前扫码的活动时，才允许签退
+                    if (statusData.activity_code === activityCode) {
+                        checkInForm.style.display = 'none';
+                        checkOutForm.style.display = 'block';
+                        showMessage('检测到您已在其他设备签到，可直接签退', false);
+                    } else {
+                        // 正在进行 A 活动，却扫了 B 活动的码
+                        checkInForm.style.display = 'none';
+                        checkOutForm.style.display = 'none';
+                        showMessage(`您正在参与 "${statusData.activity_name}"，无法在此签到/签退`, true);
+                    }
                 } else {
-                    // 如果活动没有坐标，则打印警告并隐藏地图
-                    console.warn('活动缺少坐标信息，地图未加载。');
-                    document.getElementById('map').style.display = 'none';
+                    // 没签到
+                    checkInForm.style.display = 'block';
+                    checkOutForm.style.display = 'none';
                 }
 
             } catch (error) {
-                showMessage(`加载活动失败: ${error.message}`, true);
-                loadingDiv.style.display = 'none';
-                return;
+                showMessage(`加载失败: ${error.message}`, true);
+                if (error.message.includes('401')) { // 如果 Token 失效
+                    localStorage.removeItem('student_token');
+                    window.location.href = `student_login.html?redirect_code=${activityCode}`;
+                }
             }
             
-            // 2. 检查本地存储中是否有 Token
-            const deviceToken = localStorage.getItem(tokenStorageKey);
-            
-            if (deviceToken) {
-                // 已签到，显示签退按钮
-                checkOutForm.style.display = 'block';
-            } else {
-                // 未签到，显示签到表单
-                checkInForm.style.display = 'block';
-            }
-            
-            // 隐藏加载，显示内容
             loadingDiv.style.display = 'none';
             contentDiv.style.display = 'block';
         });
 
-        // 5. 初始化地图函数
+        // 地图初始化 (保持不变)
         function initMap(activity) {
             const center = [activity.longitude, activity.latitude];
-
             map = new AMap.Map('map', {
                 zoom: 16,
                 center: center
             });
 
-            // 加载插件 (增加了 AMap.Geolocation)
             AMap.plugin(['AMap.Circle', 'AMap.Marker', 'AMap.Geolocation'], function() {
-                // 绘制签到中心点 (这是 GCJ-02)
-                activityMarker = new AMap.Marker({
-                    position: center,
-                    title: activity.location_name
-                });
+                activityMarker = new AMap.Marker({ position: center, title: activity.location_name });
                 map.add(activityMarker);
 
-                // 绘制签到范围（蓝色圆圈） (这是 GCJ-02)
                 activityCircle = new AMap.Circle({
                     center: center,
-                    radius: activity.radius_meters, // 半径
+                    radius: activity.radius_meters,
                     borderWeight: 2,
                     strokeColor: "#007bff",
                     strokeOpacity: 1,
                     fillColor: "#007bff",
-                    fillOpacity: 0.2, // 透明度
+                    fillOpacity: 0.2,
                     zIndex: 50,
                 });
                 map.add(activityCircle);
-                
-                // 缩放地图以适应圆圈
                 map.setFitView([activityCircle]);
 
-                // 初始化学生位置标记 (但不显示)
                 studentMarker = new AMap.Marker({
-                    icon: "https://webapi.amap.com/theme/v1.3/markers/n/loc.png", // 蓝色定位图标
+                    icon: "https://webapi.amap.com/theme/v1.3/markers/n/loc.png",
                     offset: new AMap.Pixel(-13, -30)
                 });
                 map.add(studentMarker);
 
-                // --- (新) 最终修复 ---
-                // 初始化高德定位插件
                 amapGeolocation = new AMap.Geolocation({
                     enableHighAccuracy: true, 
                     timeout: 10000,           
                     maximumAge: 0,            
-                    
-                    // --- 关键修改 ---
-                    convert: true,           // <-- 必须是 true
-                    
+                    convert: true,           
                     extensions: 'all',        
                     showButton: false,        
                     showMarker: false,        
                     showCircle: false,        
                 });
-                
-                // 插件加载完毕后，立即获取学生位置
                 getCurrentStudentPosition();
             });
         }
         
-        // 6. 更新学生位置标记
         function updateStudentPosition(lat, lon) {
             if (studentMarker) {
-                const position = new AMap.LngLat(lon, lat); // (这是 GCJ-02)
+                const position = new AMap.LngLat(lon, lat);
                 studentMarker.setPosition(position);
-                studentMarker.show(); // 显示标记
+                studentMarker.show();
             }
         }
         
-        // 7. 使用高德定位插件获取位置
         function getCurrentStudentPosition() {
-            showMessage('正在获取您的位置...', false); 
-
-            if (!amapGeolocation) {
-                showMessage('定位插件尚未加载，请稍候...', true);
-                return;
-            }
-
-            amapGeolocation.getCurrentPosition(function(status, result) {
-                if (status === 'complete' && result.info === 'SUCCESS') {
-                    // result.position 包含了经纬度 (这已经是 GCJ-02)
-                    const lat = result.position.lat;
-                    const lon = result.position.lng; 
-                    
-                    updateStudentPosition(lat, lon); // 更新地图上的蓝点
-                    
-                    const accuracy = result.accuracy;
-                    showMessage(`您的位置已显示 (精度: ${accuracy || '未知'} 米)`, false); 
-                    
-                    if (map && studentMarker) {
-                        map.setCenter(studentMarker.getPosition());
+            // 仅显示状态，不提示错误（错误在点击按钮时处理）
+            if (amapGeolocation) {
+                amapGeolocation.getCurrentPosition(function(status, result) {
+                    if (status === 'complete' && result.info === 'SUCCESS') {
+                        const lat = result.position.lat;
+                        const lon = result.position.lng; 
+                        updateStudentPosition(lat, lon);
+                        if (map && studentMarker) map.setCenter(studentMarker.getPosition());
                     }
-                } else {
-                    let msg = '获取您的位置失败: ' + (result.message || '未知错误');
-                    showMessage(msg, true);
-                }
-            });
+                });
+            }
         }
 
         // --- 签到逻辑 ---
+        // 修改点：不再验证输入框，直接执行操作
         checkInButton.addEventListener('click', () => {
-            const studentId = document.getElementById('student_id').value;
-            const name = document.getElementById('name').value;
-            if (!studentId || !name) {
-                showMessage('学号和姓名不能为空', true);
-                return;
-            }
-            
-            performAction('checkin', { student_id: studentId, name: name });
+            performAction('checkin', {}); 
         });
 
         // --- 签退逻辑 ---
         checkOutButton.addEventListener('click', () => {
-            const deviceToken = localStorage.getItem(tokenStorageKey);
-            if (!deviceToken) {
-                showMessage('签到凭证丢失，请刷新页面', true);
-                return; // 理论上不会发生
-            }
-            
-            performAction('checkout', { device_session_token: deviceToken });
+            // 修改：跨设备签退不需要本地 deviceToken，直接发起请求
+            // 身份验证现在由 Authorization Header (studentToken) 负责
+            performAction('checkout', {}); 
         });
 
-        // 8. 统一的动作执行器 (改用高德定位)
+        // 8. 统一的动作执行器 (核心修改)
         function performAction(type, payload) {
             showMessage('正在获取您的位置信息...', false);
             checkInButton.disabled = true;
@@ -408,67 +352,97 @@
                 return;
             }
 
-            // 使用高德定位
             amapGeolocation.getCurrentPosition(async function(status, result) {
                 if (status === 'complete' && result.info === 'SUCCESS') {
-                    const lat = result.position.lat; // (这是 GCJ-02)
-                    const lon = result.position.lng; // (这是 GCJ-02)
+                    const lat = result.position.lat;
+                    const lon = result.position.lng;
                     
                     updateStudentPosition(lat, lon);
-                    
                     showMessage(`位置获取成功 (精度: ${result.accuracy || '未知'} 米)，正在提交...`, false);
 
-                    const fullPayload = {
-                        ...payload,
-                        activity_code: activityCode,
-                        latitude: lat,
-                        longitude: lon
-                    };
-                    
-                    try {
-                    const response = await fetch(`/students_system/api/participant/${type}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(fullPayload)
-                    });
-
-                    // --- 修改开始 ---
-                    
-                    // 1. 无论状态码如何，先解析 JSON
+                    // 准备发起请求
+                    let response;
                     let resultData;
+                    
+                    // 获取 Token (确保已定义)
+                    const studentToken = localStorage.getItem('student_token');
+
                     try {
-                        resultData = await response.json();
-                    } catch (e) {
-                        resultData = {}; 
-                    }
+                        if (type === 'checkin') {
+                            // --- 签到请求 ---
+                            response = await fetch('/students_system/api/participant/checkin-auth', {
+                                method: 'POST',
+                                headers: { 
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${studentToken}`
+                                },
+                                body: JSON.stringify({
+                                    activity_code: activityCode,
+                                    latitude: lat,
+                                    longitude: lon
+                                })
+                            });
+                        } else {
+                            // --- 签退请求 (修复点：直接赋值给 response，不要用 const) ---
+                            response = await fetch('/students_system/api/participant/checkout-auth', {
+                                method: 'POST',
+                                headers: { 
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${studentToken}`
+                                },
+                                body: JSON.stringify({
+                                    activity_code: activityCode,
+                                    latitude: lat,
+                                    longitude: lon
+                                })
+                            });
+                        }
 
-                    // 2. 如果是 HTTP 错误 (如 500)，抛出异常
-                    if (!response.ok) {
-                         throw new Error(resultData.detail || `服务器错误: ${response.status}`);
-                    }
+                        // --- 统一响应处理 (签到/签退共用) ---
+                        
+                        // 1. 尝试解析 JSON，防止解析空响应报错
+                        try {
+                            resultData = await response.json();
+                        } catch (e) {
+                            resultData = {}; 
+                        }
 
-                    // 3. [关键] 如果是 200 OK，但包含 detail 字段，说明是业务拒绝（如距离过远）
-                    if (resultData.detail) {
-                        throw new Error(resultData.detail);
-                    }
+                        // 2. 处理 401 未授权 (Token过期)
+                        if (response.status === 401) {
+                            alert('登录已过期，请重新登录');
+                            localStorage.removeItem('student_token');
+                            window.location.href = `student_login.html?redirect_code=${activityCode}`;
+                            return;
+                        }
 
-                    // 4. 真正的成功逻辑
-                    if (type === 'checkin') {
-                        localStorage.setItem(tokenStorageKey, resultData.device_session_token);
-                        showMessage('签到成功!', false);
-                        checkInForm.style.display = 'none';
-                        checkOutForm.style.display = 'block';
-                    } else {
-                        localStorage.removeItem(tokenStorageKey);
-                        showMessage('签退成功!', false);
-                        checkOutForm.style.display = 'none';
-                        if(studentMarker) studentMarker.hide();
-                    }
-                    // --- 修改结束 ---
+                        // 3. 处理其他 HTTP 错误
+                        if (!response.ok) {
+                             throw new Error(resultData.detail || `服务器错误: ${response.status}`);
+                        }
 
-                } catch (error) {
-                    showMessage(`${error.message}`, true); // 去掉了前面的 "操作失败: " 前缀，让提示更清爽
-                } finally {
+                        // 4. 处理业务逻辑拒绝 (后端返回 200 但包含 detail 错误信息)
+                        if (resultData.detail) {
+                            throw new Error(resultData.detail);
+                        }
+
+                        // 5. 成功逻辑 (根据类型更新 UI)
+                        if (type === 'checkin') {
+                            // 签到成功：记录临时凭证(可选)，显示签退按钮
+                            localStorage.setItem(tokenStorageKey, resultData.device_session_token);
+                            showMessage('签到成功!', false);
+                            checkInForm.style.display = 'none';
+                            checkOutForm.style.display = 'block';
+                        } else {
+                            // 签退成功：清除临时凭证，隐藏按钮
+                            localStorage.removeItem(tokenStorageKey);
+                            showMessage('签退成功!', false);
+                            checkOutForm.style.display = 'none';
+                            if(studentMarker) studentMarker.hide();
+                        }
+
+                    } catch (error) {
+                        showMessage(`${error.message}`, true);
+                    } finally {
                         checkInButton.disabled = false;
                         checkOutButton.disabled = false;
                     }
