@@ -153,7 +153,6 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = 'your-email-auth-code'
 ```
 
-> **注意**：前端页面（`checkin.html` 和 `admin_dashboard.html`）中硬编码了高德地图的 `securityJsCode` 和 `Key`。在生产环境中，请替换为你自己申请的高德地图 Key。
 
 ### 5\. 创建管理员账号
 
