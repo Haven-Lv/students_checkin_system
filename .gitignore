@@ -1,5 +1,7 @@
 # 忽略 Python 虚拟环境（venv 文件夹）
 venv/  
+# 忽略 .env 文件
+.env
 
 # 忽略 Python 编译缓存（__pycache__ 文件夹）
 __pycache__/  

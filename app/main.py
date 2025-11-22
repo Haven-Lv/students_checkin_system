@@ -9,6 +9,10 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 import random
 import os
+from fastapi import Request # 需要导入 Request 对象
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # 导入本地模块
 from . import coord_utils
@@ -23,6 +27,11 @@ app = FastAPI(
     title="学生活动签到系统",
     description="API for student check-in system. Remember Nginx rewrite /students_system/ to /"
 )
+# 初始化 Limiter
+# key_func=get_remote_address 表示根据客户端 IP 进行限制
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- 路由拆分 ---
 router_admin = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -202,7 +211,8 @@ async def get_activity_qr_code(activity_code: str):
 
 # --- 新增：邮箱验证码接口 ---
 @router_participant.post("/send-code")
-async def send_email_code(req: models.EmailRequest):
+@limiter.limit("1/minute")
+async def send_email_code(request: Request, req: models.EmailRequest): # <--- 必须加上 request: Request
     """发送 6 位数字验证码到邮箱"""
     code = str(random.randint(100000, 999999))
     
