@@ -4,7 +4,7 @@ from pydantic import ConfigDict  # 导入 V2 配置类
 class Settings(BaseSettings):
     # 数据库配置
     DB_USER: str = 'student_system_user'
-    DB_PASSWORD: str = '201303103670@Dxsg'  # 替换为您的密码
+    DB_PASSWORD: str = '   '  # 替换为您的密码
     DB_HOST: str = 'localhost'
     DB_NAME: str = 'student_system_db'
     
@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # 以 QQ 邮箱为例
     SMTP_SERVER: str = 'smtp.qq.com'
     SMTP_PORT: int = 465 # SSL 端口
-    SMTP_USER: str = '2412748011@qq.com'      # 发送方邮箱
-    SMTP_PASSWORD: str = 'vkxcjnuxlacxdjha'   # 注意：是授权码，不是密码！
+    SMTP_USER: str = '   '      # 发送方邮箱
+    SMTP_PASSWORD: str = '   '   # 注意：是授权码，不是密码！
     
     model_config = ConfigDict(case_sensitive=True)
 settings = Settings()
