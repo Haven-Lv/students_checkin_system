@@ -88,7 +88,11 @@
             margin-bottom: 0.5rem;
             font-weight: 600;
         }
-        .form-group input {
+        /* 原来的写法只包含了 .form-group input，现在加上 .form-group-full input */
+        .form-group input, 
+        .form-group-full input { 
+            width: 100%;            /* 关键：强制占满整行宽度 */
+            box-sizing: border-box; /* 关键：防止 padding 撑爆宽度 */
             padding: 0.75rem;
             border: 1px solid #ccc;
             border-radius: 4px;
@@ -278,35 +282,42 @@
 
         // --- 2. 页面加载主函数 ---
         window.onload = function() {
+            loadActivities(); // 加载活动列表
+
             // 加载高德地图插件
             AMap.plugin(['AMap.Geolocation', 'AMap.Geocoder', 'AMap.Marker'], function() {
                 
                 marker = new AMap.Marker();
                 geocoder = new AMap.Geocoder();
 
-                // --- (新) 最终修复 ---
                 var geolocation = new AMap.Geolocation({
                     enableHighAccuracy: true,
                     timeout: 10000,
                     zoomToAccuracy: true,
-                    convert: true // <-- 必须是 true, 才能将 WGS-84 转为 GCJ-02
+                    convert: true 
                 });
 
-                // 尝试获取当前位置
+                // 获取当前位置
                 geolocation.getCurrentPosition(function(status, result) {
                     var centerPoint = [116.397428, 39.90923]; // 默认北京
+                    var isLocated = false;
+
                     if (status == 'complete' && result.info === 'SUCCESS') {
-                        // 使用高德返回的 lng, lat (这已经是 GCJ-02 了)
                         centerPoint = [result.position.lng, result.position.lat];
+                        isLocated = true;
                     } else {
-                        console.error('Geolocation failed:', result.message);
+                        console.error('定位失败:', result.message);
                     }
+                    
                     initMap(centerPoint); // 初始化地图
+
+                    // --- 新增：如果定位成功，自动选中当前位置 ---
+                    if (isLocated) {
+                        var currentLngLat = new AMap.LngLat(centerPoint[0], centerPoint[1]);
+                        selectLocation(currentLngLat);
+                    }
                 });
             });
-
-            // 页面加载时，获取活动列表
-            loadActivities();
         };
 
         // --- 3. 地图初始化函数 ---
@@ -319,31 +330,35 @@
             map.on('click', handleMapClick);
         }
 
-        // --- 4. 地图点击事件 ---
-        function handleMapClick(e) {
-            // e.lnglat 已经是 GCJ-02 坐标
-            var lat = e.lnglat.getLat();
-            var lng = e.lnglat.getLng();
+        // --- 抽取的通用选点函数 (新增) ---
+        function selectLocation(lnglat) {
+            // 1. 填充经纬度
+            document.getElementById('latitude').value = lnglat.getLat();
+            document.getElementById('longitude').value = lnglat.getLng();
             
-            document.getElementById('latitude').value = lat;
-            document.getElementById('longitude').value = lng;
-            
-            marker.setPosition(e.lnglat);
+            // 2. 移动 Marker
+            marker.setPosition(lnglat);
             map.add(marker);
+            map.setCenter(lnglat); // 确保视野中心对准
             
-            geocoder.getAddress(e.lnglat, function(status, result) {
+            // 3. 逆地理编码获取地址名称
+            geocoder.getAddress(lnglat, function(status, result) {
                 if (status === 'complete' && result.info === 'OK') {
                     document.getElementById('location_name').value = result.regeocode.formattedAddress;
                 } else {
+                    // 如果获取失败且输入框为空，给个默认值
                     if (!document.getElementById('location_name').value) {
                          document.getElementById('location_name').value = "未知地点";
                     }
-                    console.warn('逆地址编码失败:', result);
                 }
             });
         }
 
-        // --- (后续所有 JS 保持不变) ---
+        // --- 4. 地图点击事件 (修改) ---
+        function handleMapClick(e) {
+            // 调用抽取的函数
+            selectLocation(e.lnglat);
+        }
         
         // --- 5. 加载活动列表 ---
         async function loadActivities() {
@@ -447,8 +462,14 @@
                 const data = await response.json();
                 const logs = data.logs;
                 
+                // -- 添加导出按钮 --
                 let tableHtml = `
-                    <h3>"${data.activity_name}" 签到详情 (共 ${logs.length} 人)</h3>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h3 style="margin:0;">"${data.activity_name}" 签到详情 (共 ${logs.length} 人)</h3>
+                        <button class="btn-logs" style="background-color:#28a745;" onclick="downloadExcel('${code}', '${data.activity_name}')">
+                            📥 导出 Excel
+                        </button>
+                    </div>
                     <table id="result-table">
                         <thead>
                             <tr>
@@ -483,6 +504,45 @@
 
             } catch (error) {
                 resultDiv.innerHTML = `<p class="error-msg">加载详情失败: ${error.message}</p>`;
+            }
+        }
+
+        // --- 新增：导出 Excel ---
+        async function downloadExcel(code, name) {
+            const btn = event.target; // 获取点击的按钮
+            const originalText = btn.innerText;
+            btn.innerText = '正在导出...';
+            btn.disabled = true;
+
+            try {
+                // 发起请求，必须带上 Token
+                const response = await fetch(`/students_system/api/admin/activities/${code}/export`, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '导出失败');
+                }
+
+                // 处理文件流下载
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                // 尝试使用自定义文件名 (虽然后端设置了 Content-Disposition，但在某些浏览器手动设置更稳妥)
+                a.download = `【${name}】_签到表.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+            } catch (error) {
+                alert(`导出失败: ${error.message}`);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
             }
         }
 

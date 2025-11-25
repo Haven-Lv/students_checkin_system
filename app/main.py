@@ -13,6 +13,8 @@ from fastapi import Request # 需要导入 Request 对象
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from openpyxl import Workbook
+from urllib.parse import quote
 
 # 导入本地模块
 from . import coord_utils
@@ -127,6 +129,62 @@ async def get_activity_logs(
         
         logs = db_utils.get_check_logs_for_activity(db, activity['id'])
         return {"activity_name": activity['name'], "logs": logs}
+
+@router_admin.get("/activities/{activity_code}/export")
+async def export_activity_excel(
+    activity_code: str,
+    admin_user: str = Depends(security.get_current_admin)
+):
+    """
+    导出指定活动的签到表为 Excel
+    """
+    with get_db_connection() as db:
+        activity = db_utils.get_activity_by_code(db, activity_code)
+        if not activity:
+            raise HTTPException(status_code=404, detail="Activity not found")
+        
+        # 获取签到记录
+        logs = db_utils.get_check_logs_for_activity(db, activity['id'])
+
+    # 创建 Excel 工作簿
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "签到记录"
+    
+    # 写入表头
+    headers = ["学号", "姓名", "签到时间", "签退时间"]
+    ws.append(headers)
+    
+    # 写入数据
+    for log in logs:
+        # 格式化时间，处理 None 的情况
+        c_in = log['check_in_time'].strftime('%Y-%m-%d %H:%M:%S') if log['check_in_time'] else "未签到"
+        c_out = log['check_out_time'].strftime('%Y-%m-%d %H:%M:%S') if log['check_out_time'] else "未签退"
+        
+        ws.append([
+            log['student_id'],
+            log['name'],
+            c_in,
+            c_out
+        ])
+    
+    # 保存到内存流
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    
+    # 生成文件名：【活动名称】_签到表.xlsx
+    filename = f"【{activity['name']}】_签到表.xlsx"
+    # URL 编码文件名以解决中文乱码问题
+    encoded_filename = quote(filename)
+    
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{encoded_filename}"
+        }
+    )
 
 @router_admin.delete("/activities/{activity_code}")
 async def delete_activity(

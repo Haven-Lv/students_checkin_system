@@ -1,6 +1,6 @@
 # 学生活动签到系统 (Student Check-in System)
 
-这是一个基于 **FastAPI (Python)** 和 **MySQL** 开发的地理位置签到系统。系统支持**多管理员/多组织隔离**，管理员可以创建活动并生成二维码，学生通过邮箱验证登录后，扫描二维码并在指定地点范围内进行签到和签退。
+这是一个基于 **FastAPI (Python)** 和 **MySQL** 开发的地理位置签到系统。系统支持**多管理员/多组织隔离**，管理员可以创建活动、生成二维码并导出签到数据；学生通过邮箱验证登录后，扫描二维码并在指定地点范围内进行签到和签退。
 
 系统集成了 **高德地图 API** 用于地理围栏判定，支持防作弊（距离校验），并具备完善的管理员后台。
 
@@ -10,10 +10,12 @@
 
   * **独立账户**：每个管理员拥有独立的活动列表和学生数据，互不干扰。
   * **活动管理**：
-      * 创建活动：设置名称、时间、签到半径，并在地图上可视化点选位置（支持拖拽修改）。
-      * 生成二维码：一键生成活动专属签到二维码。
-      * 编辑/删除：支持修改活动时间、地点及半径，支持删除活动（级联删除签到记录）。
-  * **数据统计**：查看每个活动的详细签到/签退日志（包含学号、姓名、时间）。
+      * **创建活动**：设置名称、时间、签到半径，并在地图上可视化点选位置（支持拖拽修改、自动逆地址解析）。
+      * **生成二维码**：一键生成活动专属签到二维码。
+      * **编辑/删除**：支持修改活动时间、地点及半径，支持删除活动（级联删除签到记录）。
+  * **数据统计与导出**：
+      * 查看每个活动的详细签到/签退日志。
+      * ** 导出 Excel**：一键将签到记录下载为 `.xlsx` 表格，包含学号、姓名、签到/签退时间。
 
 ### 🙋‍♂️ 学生端
 
@@ -29,10 +31,10 @@
   * **后端框架**: FastAPI (Python 3.8+)
   * **数据库**: MySQL 5.7+ / 8.0+
   * **ORM/DB库**: `mysql-connector-python` (原生 SQL 封装)
+  * **数据导出**: `openpyxl` (Excel 处理)
   * **前端**: 原生 HTML5 + CSS3 + JavaScript (无构建步骤，开箱即用)
   * **地图服务**: 高德地图 JS API (AMap)
   * **认证机制**: OAuth2 + JWT (JSON Web Tokens)
-  * **工具库**: `pydantic` (数据校验), `haversine` (距离计算)
 
 ## 📂 项目结构
 
@@ -40,7 +42,7 @@
 students_checkin_system/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py             # API 主入口
+│   ├── main.py             # API 主入口 (含 Excel 导出路由)
 │   ├── config.py           # 配置加载 (.env)
 │   ├── models.py           # Pydantic 数据模型
 │   ├── db_utils.py         # 数据库 CRUD 操作 (含事务管理)
@@ -48,7 +50,7 @@ students_checkin_system/
 │   ├── coord_utils.py      # 坐标系转换 (GCJ02 <-> WGS84)
 │   ├── create_admin.py     # 创建管理员脚本
 │   └── static/             # 前端页面
-│       ├── admin_dashboard.html
+│       ├── admin_dashboard.html  # 管理后台 (含地图选点、导出按钮)
 │       ├── admin_login.html
 │       ├── checkin.html
 │       └── student_login.html
@@ -71,11 +73,11 @@ students_checkin_system/
 pip install -r requirements.txt
 ```
 
+*(注意：`requirements.txt` 中必须包含 `openpyxl` 以支持导出功能)*
+
 ### 3\. 数据库初始化
 
 请在 MySQL 中创建一个数据库（例如 `student_system_db`），并执行以下 SQL 语句。
-
-> **注意**：与旧版本相比，表结构增加了 `admin_id` 以支持多用户隔离。
 
 ```sql
 CREATE DATABASE IF NOT EXISTS student_system_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -173,6 +175,8 @@ python -m app.create_admin
 
 ### 6\. 启动服务
 
+**重要**：请务必在**项目根目录**下运行以下命令，以避免相对导入错误：
+
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -183,8 +187,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 1.  访问 `http://localhost:8000/static/admin_login.html`（或根据 Nginx 配置的路径）。
 2.  登录后进入控制台。
-3.  **创建活动**：填写信息，在地图上点击选择中心点。
+3.  **创建活动**：填写信息，在地图上点击选择中心点（支持自动获取地址名称）。
 4.  **分发**：在活动列表中点击“二维码”，下载图片或复制链接发送给学生。
+5.  **查看数据**：点击“详情”，可查看签到列表，并点击右上角绿色按钮**导出 Excel**。
 
 ### 学生流程
 
