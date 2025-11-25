@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理员登录</title>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
     <style>
         body {
             font-family: sans-serif;
@@ -52,6 +54,7 @@
         button:hover {
             background-color: #0056b3;
         }
+        /* 保留了 message div 的样式，但 JS 中已不再使用 */
         #message {
             margin-top: 1rem;
             text-align: center;
@@ -82,46 +85,54 @@
 
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            const messageDiv = document.getElementById('message');
-            messageDiv.textContent = ''; // 清空错误信息
+            // 移除了对 messageDiv 的引用和清空操作
 
             try {
                 // 向后端 /api/admin/login 发送请求
-                // 这个 URL 是 Nginx 转发后的
                 const response = await fetch('/students_system/api/admin/login', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    // FastAPI 的 OAuth2PasswordBearer 需要 form data 格式
-                    // 但我们的 /login 路由 (main.py) 定义的是接收 JSON (models.AdminLogin)
-                    // 所以我们发送 JSON
-                    body: JSON.stringify({
-                        username: username,
-                        password: password
-                    })
+                    body: JSON.stringify({ username, password })
                 });
 
                 const data = await response.json();
 
                 if (!response.ok) {
-                    // 登录失败 (例如 401 Unauthorized)
+                    // 登录失败
                     throw new Error(data.detail || '登录失败');
                 }
 
                 // 登录成功！
-                // data 应该是 { "access_token": "...", "token_type": "bearer" }
-                
-                // --- 关键步骤 ---
-                // 1. 将 token 存储在 localStorage 中
                 localStorage.setItem('admin_access_token', data.access_token);
                 
-                // 2. 跳转到管理员控制台
+                // --- 优化：登录成功 Toast ---
+                const Toast = Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 1500,
+                    timerProgressBar: true
+                });
+
+                await Toast.fire({
+                    icon: 'success',
+                    title: '登录成功，正在进入控制台...'
+                });
+                
+                // 跳转到管理员控制台
                 window.location.href = '/students_system/admin_dashboard.html';
 
             } catch (error) {
+                // --- 优化：错误弹窗 ---
                 console.error('登录时出错:', error);
-                messageDiv.textContent = error.message;
+                Swal.fire({
+                    icon: 'error',
+                    title: '登录失败',
+                    text: error.message,
+                    confirmButtonColor: '#007bff'
+                });
             }
         });
     </script>

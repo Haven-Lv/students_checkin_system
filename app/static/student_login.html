@@ -4,12 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>学生登录</title>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f0f2f5; display:flex; justify-content:center; align-items:center; height:100vh; }
         .box { background: white; padding: 2rem; border-radius: 8px; width: 100%; max-width: 350px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         h2 { text-align: center; color: #007bff; }
         input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        button { width: 100%; padding: 10px; background: #007bff; color: #ffffff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
         button:disabled { background: #ccc; }
         .code-group { display: flex; gap: 10px; }
         #register-fields { display: none; border-top: 1px dashed #ccc; padding-top: 15px; margin-top: 10px; }
@@ -70,19 +72,28 @@
                 const name = document.getElementById('name').value;
                 const msg = document.getElementById('msg');
 
-                // --- 修改开始 ---
                 // 获取 URL 中的 redirect_code (即 activity_code)
                 const urlParams = new URLSearchParams(window.location.search);
                 const activityCode = urlParams.get('redirect_code');
+                const codeParam = activityCode; // 用于后续的跳转判断
 
                 const payload = { 
                     email, 
                     code,
-                    activity_code: activityCode // 新增参数
+                    activity_code: activityCode
                 };
 
             if (isRegistering) {
-                if(!studentId || !name) return alert('请补充学号和姓名');
+                
+                if (!studentId || !name) {
+                    // 严格按照要求修改：注册信息缺失使用 Swal.fire 警告
+                    return Swal.fire({
+                        icon: 'warning',
+                        title: '信息缺失',
+                        text: '请补充学号和姓名以完成注册',
+                        confirmButtonColor: '#007bff'
+                    });
+                }               
                 payload.student_id = studentId;
                 payload.name = name;
             }
@@ -104,23 +115,55 @@
                     return;
                 }
 
-                if (!res.ok) throw new Error(data.detail || '登录失败');
+                if (!res.ok) {
+                    // 接口报错处理 (非需要注册的 400 错误)
+                    throw new Error(data.detail || '登录失败');
+                }
 
                 // 登录成功
                 localStorage.setItem('student_token', data.access_token);
                 
-                // 如果 URL 里有 redirect_code (活动码)，则跳回签到页
-                const urlParams = new URLSearchParams(window.location.search);
-                const codeParam = urlParams.get('redirect_code');
+                // 成功提示 (使用 Toast 模式，右上角弹出，不打断用户)
+                const Toast = Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2000,
+                    timerProgressBar: true
+                });
+
                 if (codeParam) {
-                    window.location.href = `checkin.html?code=${codeParam}`;
+                    Toast.fire({
+                        icon: 'success',
+                        title: '登录成功，正在跳转...'
+                    });
                 } else {
-                    msg.innerText = "登录成功！请扫描活动二维码进入签到。";
-                    msg.style.color = "green";
+                    Toast.fire({
+                        icon: 'success',
+                        title: '登录成功！'
+                    });
                 }
 
+
+                // 延迟跳转，让用户看清提示
+                setTimeout(() => {
+                    if (codeParam) {
+                        window.location.href = `checkin.html?code=${codeParam}`;
+                    } else {
+                        // 如果没有 redirect_code (活动码)，则显示原始提示信息
+                        msg.innerText = "登录成功！请扫描活动二维码进入签到。";
+                        msg.style.color = "green";
+                    }
+                }, 1500);
+
             } catch (e) {
-                msg.innerText = e.message;
+                // 严格按照要求修改：使用 Swal.fire 弹出错误提示
+                Swal.fire({
+                    icon: 'error',
+                    title: '操作失败',
+                    text: e.message,
+                    confirmButtonColor: '#dc3545'
+                });
             }
         }
     </script>

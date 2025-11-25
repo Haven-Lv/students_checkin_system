@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理员控制台</title>
-    
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
     <script>
         const token = localStorage.getItem('admin_access_token');
         if (!token) {
@@ -91,7 +92,7 @@
         /* 原来的写法只包含了 .form-group input，现在加上 .form-group-full input */
         .form-group input, 
         .form-group-full input { 
-            width: 100%;            /* 关键：强制占满整行宽度 */
+            width: 100%;/* 关键：强制占满整行宽度 */
             box-sizing: border-box; /* 关键：防止 padding 撑爆宽度 */
             padding: 0.75rem;
             border: 1px solid #ccc;
@@ -392,9 +393,7 @@
                     const isoStart = new Date(activity.start_time).toISOString().slice(0, 16);
                     const isoEnd = new Date(activity.end_time).toISOString().slice(0, 16);
 
-                    // 修改按钮：将 btn-time 改名为 “编辑活动”，并传递更多参数
-                    // 注意：location_name 可能包含引号，建议使用 escape 或简单的替换处理，或者只传 code 并在弹窗里重新 fetch。
-                    // 为了简单起见，这里假设 location_name 不含特殊字符，或者我们使用 encodeURIComponent
+                    // 注意：location_name 可能包含引号，建议使用 encodeURIComponent
                     const safeLocName = encodeURIComponent(activity.location_name || '');
 
                     li.innerHTML = `
@@ -425,7 +424,6 @@
             const qrImgUrl = `/students_system/api/participant/activity/${code}/qr`;
             
             // 手动拼接签到页面的完整 URL (用于显示文本)
-            // 注意：这里使用了你的域名 havenchannel.xyz
             const checkinPageUrl = `https://havenchannel.xyz/students_system/checkin.html?code=${code}`;
 
             resultDiv.innerHTML = `
@@ -507,11 +505,12 @@
             }
         }
 
-        // --- 新增：导出 Excel ---
+        // --- 新增：导出 Excel (已修改) ---
         async function downloadExcel(code, name) {
-            const btn = event.target; // 获取点击的按钮
+            const btn = event.target;
+            // 使用 Loading 状态
             const originalText = btn.innerText;
-            btn.innerText = '正在导出...';
+            btn.innerText = '⏳ 导出中...';
             btn.disabled = true;
 
             try {
@@ -531,15 +530,29 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                // 尝试使用自定义文件名 (虽然后端设置了 Content-Disposition，但在某些浏览器手动设置更稳妥)
+                // 尝试使用自定义文件名
                 a.download = `【${name}】_签到表.xlsx`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 window.URL.revokeObjectURL(url);
 
+                // 下载成功也可以给个轻提示 (Toast)
+                const Toast = Swal.mixin({
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 3000
+                });
+                Toast.fire({ icon: 'success', title: 'Excel 下载已开始' });
+
             } catch (error) {
-                alert(`导出失败: ${error.message}`);
+                // 导出失败使用 Swal 弹窗
+                Swal.fire({
+                    icon: 'error',
+                    title: '导出失败',
+                    text: error.message
+                });
             } finally {
                 btn.innerText = originalText;
                 btn.disabled = false;
@@ -633,7 +646,7 @@
             });
         }
 
-        // --- 9. 处理更改所有信息提交 ---
+        // --- 9. 处理更改所有信息提交 (已修改) ---
         async function handleUpdateActivity(code) {
             const data = {
                 start_time: document.getElementById('u_start').value,
@@ -645,7 +658,7 @@
             };
 
             if (!data.start_time || !data.end_time || !data.location_name) {
-                alert("请填写完整信息");
+                Swal.fire('提示', '请填写完整信息', 'warning');
                 return;
             }
 
@@ -664,24 +677,45 @@
                     throw new Error(err.detail || '更新失败');
                 }
                 
-                resultDiv.innerHTML = `<p class="success-msg">活动信息更新成功!</p>`;
+                // 成功提示
+                Swal.fire({
+                    icon: 'success',
+                    title: '更新成功',
+                    text: '活动信息已保存',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+                
                 loadActivities(); // 刷新列表
 
             } catch (error) {
-                alert(`更新失败: ${error.message}`);
+                Swal.fire('更新失败', error.message, 'error');
             }
         }
 
         // --- 10. 删除活动 ---
         async function deleteActivity(code, name) {
-            if (!confirm(`确定要删除活动 "${name}" 吗？\n所有相关的签到记录将一同被删除，此操作不可逆！`)) {
+            // 使用 Swal 的确认框替换原生的 confirm
+            const result = await Swal.fire({
+                title: '确定删除?',
+                text: `即将删除活动 "${name}" 及其所有签到记录，此操作不可逆！`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#dc3545', // 红色用于删除
+                cancelButtonColor: '#6c757d', // 灰色用于取消
+                confirmButtonText: '是的，删除它!',
+                cancelButtonText: '取消'
+            });
+
+            // 如果用户点击取消或关闭弹窗，则返回
+            if (!result.isConfirmed) {
                 return;
             }
 
             resultDiv.innerHTML = `正在删除 "${name}"...`;
             resultDiv.scrollIntoView({ behavior: 'smooth' });
 
-             try {
+            try {
                 const response = await fetch(`/students_system/api/admin/activities/${code}`, {
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
@@ -696,17 +730,16 @@
                 loadActivities(); // 刷新列表
 
             } catch (error) {
-                 resultDiv.innerHTML = `<p class="error-msg">删除失败: ${error.message}</p>`;
+                resultDiv.innerHTML = `<p class="error-msg">删除失败: ${error.message}</p>`;
             }
         }
 
-
-        // --- 11. 表单提交逻辑 ---
+        // --- 11. 表单提交逻辑 (已修改) ---
         document.getElementById('activityForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            resultDiv.innerHTML = '正在创建...';
-
+            // 移除了 resultDiv.innerHTML = '正在创建...';
+            
             const data = {
                 name: document.getElementById('name').value,
                 start_time: document.getElementById('start_time').value,
@@ -718,13 +751,20 @@
             };
 
             if (!data.latitude) {
-                resultDiv.innerHTML = '<p class="error-msg">请在地图上选择一个地点</p>';
+                Swal.fire('请选择地点', '请在地图上点击选择一个活动地点', 'warning');
                 return;
             }
             if (!data.location_name || data.location_name === "未知地点") {
-                resultDiv.innerHTML = '<p class="error-msg">请输入有效的地点名称</p>';
+                Swal.fire('地点名称无效', '请输入有效的地点名称', 'warning');
                 return;
             }
+
+            // 显示加载 Loading
+            Swal.fire({
+                title: '正在创建...',
+                didOpen: () => { Swal.showLoading() },
+                allowOutsideClick: false
+            });
 
             try {
                 const response = await fetch('/students_system/api/admin/activities', {
@@ -737,30 +777,39 @@
                 });
 
                 if (response.status === 401) {
-                    resultDiv.innerHTML = '<p class="error-msg">认证失败：请重新登录。</p>';
+                    Swal.fire('认证失败', '会话已过期，请重新登录', 'error');
                     return;
                 }
 
                 if (response.ok) {
                     const result = await response.json();
+                    
+                    // 成功后弹出带图的弹窗
                     const qrUrl = `/students_system/api/participant/activity/${result.unique_code}/qr`;
                     
-                    resultDiv.innerHTML = `
-                        <h3 class="success-msg">活动创建成功!</h3>
-                        <p>活动代码: ${result.unique_code}</p>
-                        <img src="${qrUrl}" alt="签到二维码" width="200">`;
-                    
+                    Swal.fire({
+                        icon: 'success',
+                        title: '活动创建成功!',
+                        html: `
+                            <p>活动代码: <b>${result.unique_code}</b></p>
+                            <img src="${qrUrl}" alt="二维码" style="width:150px; border:1px solid #ddd; padding:5px;">
+                            <p style="font-size:0.9rem; color:#666;">您可以稍后在列表中查看详情</p>
+                        `,
+                        confirmButtonText: '好的'
+                    });
+
                     document.getElementById('activityForm').reset();
                     marker.setMap(null); 
+                    document.getElementById('result').innerHTML = ''; // 清空旧的 resultDiv
                     loadActivities();
 
                 } else {
                     const errorData = await response.json();
-                    resultDiv.innerHTML = `<p class="error-msg">创建失败: ${errorData.detail || '未知错误'}</p>`;
+                    Swal.fire('创建失败', errorData.detail || '未知错误', 'error');
                 }
             } catch (error) {
                 console.error('创建活动时出错:', error);
-                resultDiv.innerHTML = '<p class="error-msg">创建失败，请检查网络连接。</p>';
+                Swal.fire('网络错误', '请求失败，请检查网络连接', 'error');
             }
         });
     </script>

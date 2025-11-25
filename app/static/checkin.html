@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>活动签到</title>
-    
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📍</text></svg>">
     <script type="text/javascript">
         window._AMapSecurityConfig = {
            serviceHost: 'https://havenchannel.xyz/_AMapService',
@@ -409,7 +410,14 @@
 
                         // 2. 处理 401 未授权 (Token过期)
                         if (response.status === 401) {
-                            alert('登录已过期，请重新登录');
+                            await Swal.fire({
+                                icon: 'warning',
+                                title: '会话已过期',
+                                text: '请重新登录以继续操作',
+                                confirmButtonText: '去登录',
+                                confirmButtonColor: '#007bff',
+                                allowOutsideClick: false
+                            });
                             localStorage.removeItem('student_token');
                             window.location.href = `student_login.html?redirect_code=${activityCode}`;
                             return;
@@ -421,22 +429,37 @@
                         }
 
                         // 4. 处理业务逻辑拒绝 (后端返回 200 但包含 detail 错误信息)
+                        //  替换“组织不匹配”的 confirm
                         if (resultData.detail) {
-                            // --- 新增代码开始：自动引导切换身份 ---
                             if (resultData.detail.includes('组织不匹配')) {
-                                if (confirm('检测到您当前的登录身份不属于该活动所在的组织/学校。\n\n需要重新登录以切换到该组织吗？')) {
-                                    // 清除旧的 Token
+                                const result = await Swal.fire({
+                                    title: '切换登录组织?',
+                                    text: '检测到您当前的登录身份不属于该活动所在的组织/学校。\n需要重新登录以切换到该组织吗？',
+                                    icon: 'question',
+                                    showCancelButton: true,
+                                    confirmButtonColor: '#007bff',
+                                    cancelButtonColor: '#6c757d',
+                                    confirmButtonText: '是的，重新登录',
+                                    cancelButtonText: '取消'
+                                });
+
+                                if (result.isConfirmed) {
                                     localStorage.removeItem('student_token');
-                                    // 跳转到登录页 (带上当前活动的 code，以便重新注册/登录到正确的组织)
                                     window.location.href = `student_login.html?redirect_code=${activityCode}`;
                                     return;
                                 }
+                            } else {
+                                // 普通业务错误 (如：不在范围内)
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: '无法操作',
+                                    text: resultData.detail,
+                                    confirmButtonColor: '#dc3545'
+                                });
                             }
-                            // --- 新增代码结束 ---
-                            
-                            throw new Error(resultData.detail);
+                            // 抛出错误以中断后续流程 (保持原有逻辑结构)
+                            throw new Error(resultData.detail); 
                         }
-
                         // 5. 成功逻辑 (根据类型更新 UI)
                         if (type === 'checkin') {
                             // 签到成功：记录临时凭证(可选)，显示签退按钮
